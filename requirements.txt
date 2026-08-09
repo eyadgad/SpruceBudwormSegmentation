@@ -1,0 +1,18 @@
+# Phase 3 framework dependencies.
+# Install torch matching your CUDA build FIRST, e.g. (CUDA 12.4):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then: pip install -r requirements.txt
+#
+# Verified working set on the target machine (RTX 4080 SUPER, driver 560.94):
+#   torch 2.6.0+cu124, segmentation-models-pytorch 0.5.0
+
+torch>=2.4
+numpy>=1.26
+pandas>=2.0
+xarray>=2024.0
+netCDF4>=1.6
+scipy>=1.11
+pyyaml>=6.0
+tqdm>=4.66
+segmentation-models-pytorch>=0.4   # U-Net++, DeepLabV3+, SegFormer
+tabulate>=0.9                       # pandas.to_markdown for the comparison table

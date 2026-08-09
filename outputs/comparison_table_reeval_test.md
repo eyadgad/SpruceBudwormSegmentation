@@ -1,0 +1,10 @@
+# Re-evaluation on test split (macro + micro), TTA=True
+
+`dice_macro` = mean per-scene Dice (headline, comparable to the notebook). `dice_micro` = pixel-pooled Dice (comparable to per-epoch patch val_dice). `REF:` rows are the reference-notebook macro numbers over ~10 scenes.
+
+| experiment                                   | model          | loss          |   threshold |   dice_macro |   dice_micro |   iou_macro |   boundary_iou |      nsd |   hd95 |   precision |   recall |   bg_fp_rate |   n_pos_scenes | source                                 |   iou_micro |
+|:---------------------------------------------|:---------------|:--------------|------------:|-------------:|-------------:|------------:|---------------:|---------:|-------:|------------:|---------:|-------------:|---------------:|:---------------------------------------|------------:|
+| REF: RandomForest (notebook best ML)         | random_forest  | -             |      nan    |       0.6832 |     nan      |    nan      |       nan      | nan      | nan    |    nan      | nan      |    nan       |            nan | reference_notebook (macro, ~10 scenes) |         nan |
+| REF: AttentionU-Net+Focal (notebook best DL) | attention_unet | focal         |      nan    |       0.6412 |     nan      |      0.4719 |       nan      | nan      | nan    |    nan      | nan      |    nan       |            nan | reference_notebook (macro, ~10 scenes) |         nan |
+| sweep_unetpp_dbz0_e012345678_focaltv         | smp_unetpp     | focal_tversky |        0.15 |       0.6322 |       0.7155 |      0.492  |         0.4135 |   0.3401 |  75.1  |      0.5688 |   0.7735 |      0.00605 |            170 | this_framework                         |         nan |
+| sweep_attunet_dbz0_e012345678_focaltv        | attention_unet | focal_tversky |        0.15 |       0.6308 |       0.713  |      0.4909 |         0.422  |   0.3695 |  84.94 |      0.5707 |   0.7701 |      0.00703 |            170 | this_framework                         |         nan |

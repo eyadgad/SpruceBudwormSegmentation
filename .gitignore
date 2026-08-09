@@ -1,0 +1,39 @@
+# --- Python environment / caches ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# --- Raw dataset (515 GB, not distributable here) ---
+Data/
+
+# --- Derived target cache (136 MB of .npz) ---
+artifacts/targets/
+
+# --- Model checkpoints: excluded by default; the best models are force-added ---
+outputs/checkpoints/
+
+# --- Run logs and internal scratch files ---
+outputs/*.log
+outputs/_*.txt
+outputs/_old_site_index.html
+
+# --- Progress website (lives in its own repo) ---
+sprucebudworm_progress.github.io/
+
+# --- Legacy / large one-off files ---
+old-budworm-training.ipynb
+
+# --- Internal engineering log (dev notes) ---
+progress.md
+
+# --- Verbose per-run training logs (metrics are in history.csv / result.json) ---
+outputs/experiments/*.log
+
+# --- Manifest with absolute local paths; references non-shipped data ---
+artifacts/manifest.csv
+
+# --- Website-only tooling (separate repo); leaks local paths ---
+setup_git.py
+enable_pages.py

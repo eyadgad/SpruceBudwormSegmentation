@@ -1,0 +1,19 @@
+{
+  "members": [
+    "sweep_unetpp_dbz0_e012345678_focaltv",
+    "sweep_attunet_dbz0_e012345678_focaltv"
+  ],
+  "tta": false,
+  "threshold": 0.15,
+  "dice_macro": 0.6335329946730508,
+  "dice_micro": 0.7141618772719225,
+  "iou_macro": 0.49318757009800107,
+  "precision": 0.5688291710408732,
+  "recall": 0.7821102246610944,
+  "boundary_iou": 0.4183741009808823,
+  "nsd": 0.36089570751124034,
+  "hd95": 82.96660657789877,
+  "assd": 21.67878433901713,
+  "bg_fp_rate": 0.007147671568627452,
+  "n_pos_scenes": 170
+}

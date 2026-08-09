@@ -1,0 +1,113 @@
+{
+  "data": {
+    "root": "Data",
+    "cleaned_subdir": "Cleaned_Date_2013_2019",
+    "matched_csv": "matched_samples.csv",
+    "artifacts_dir": "artifacts"
+  },
+  "split": {
+    "mode": "stratified",
+    "fractions": {
+      "train": 0.7,
+      "val": 0.2,
+      "test": 0.1
+    },
+    "seed": 42
+  },
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "target": {
+    "mode": "threshold",
+    "dbz_threshold": 0.0,
+    "soft_sigma": 0.0
+  },
+  "negatives": {
+    "include": true,
+    "ratio": 0.3
+  },
+  "patch": {
+    "size": 256,
+    "patches_per_image": 8,
+    "pos_sample_rate": 0.5,
+    "hard_pos_rate": 0.3
+  },
+  "train": {
+    "epochs": 50,
+    "batch_size": 8,
+    "lr": 0.0003,
+    "weight_decay": 1e-05,
+    "warmup_epochs": 3,
+    "patience": 40,
+    "es_tolerance": 0.001,
+    "amp": true,
+    "amp_dtype": "bfloat16",
+    "accum_steps": 1,
+    "num_workers": 0,
+    "pin_memory": false,
+    "snapshot_every": 5,
+    "scene_cache": 16
+  },
+  "augment": {
+    "enabled": true,
+    "hflip": true,
+    "vflip": true,
+    "rot90": true
+  },
+  "eval": {
+    "patch_size": 256,
+    "overlap": 0.5,
+    "tta": false,
+    "gaussian_window": true,
+    "boundary_metrics": true,
+    "nsd_tolerance": 2.0,
+    "threshold_range": [
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6
+    ],
+    "calib_max_scenes": 50
+  },
+  "model": {
+    "name": "smp_deeplabv3p",
+    "base_filters": 32,
+    "encoder": "resnet34",
+    "pretrained": true
+  },
+  "loss": {
+    "name": "focal_tversky",
+    "dice_weight": 0.5,
+    "bce_weight": 0.5,
+    "alpha": 0.3,
+    "beta": 0.7,
+    "gamma": 1.333
+  },
+  "output_dir": "outputs",
+  "data_prep": {
+    "norm_max_scenes": 200,
+    "norm_channels": [
+      "th_e0",
+      "th_e1",
+      "th_e2",
+      "th_e3",
+      "th_e4",
+      "th_e5",
+      "height_e0",
+      "dem",
+      "bh_e0"
+    ]
+  },
+  "name": "sweep_deeplab_dbz0_dembeam_focaltv"
+}

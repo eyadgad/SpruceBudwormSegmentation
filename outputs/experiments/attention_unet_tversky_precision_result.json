@@ -1,0 +1,38 @@
+{
+  "name": "attention_unet_tversky_precision",
+  "model": "attention_unet",
+  "loss": "tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 7855581,
+  "best_val_dice_patch": 0.6775767140714185,
+  "best_epoch": 52,
+  "calibrated_threshold": 0.15,
+  "test_full_scene": {
+    "dice": 0.6143768231547271,
+    "iou": 0.47389669734767126,
+    "precision": 0.6304576728221604,
+    "recall": 0.6664734060510977,
+    "f1": 0.6143768185996549,
+    "accuracy": 0.966561312806362,
+    "boundary_iou": 0.3724087633023791,
+    "nsd": 0.2549001807512759,
+    "hd95": 92.86785723637279,
+    "assd": 26.995822331946183,
+    "dice_micro": 0.6983265373530153,
+    "iou_micro": 0.536483655380783,
+    "precision_micro": 0.6735006149520477,
+    "recall_micro": 0.7250527232609028,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.007426308283730159,
+    "threshold": 0.15
+  }
+}

@@ -1,0 +1,23 @@
+experiment,model,loss,n_channels,n_params,val_dice_patch,threshold,test_dice_macro,test_dice_micro,test_precision,test_recall,boundary_iou,nsd,bg_fp_rate,source
+REF: RandomForest (notebook best ML),random_forest,-,,,,,0.6832,,,,,,,"reference_notebook (macro, ~10 scenes)"
+REF: AttentionU-Net+Focal (notebook best DL),attention_unet,focal,,,,,0.6412,,,,,,,"reference_notebook (macro, ~10 scenes)"
+sweep_attunet_dbz0_e012345678_focaltv,attention_unet,focal_tversky,10.0,7856733.0,0.7131,0.15,0.6347,0.7189,0.5885,0.7505,0.4311,0.3769,0.00635,this_framework
+sweep_unetpp_dbz0_e012345678_focaltv,smp_unetpp,focal_tversky,10.0,10403315.0,0.7124,0.15,0.6317,0.7214,0.6044,0.7183,0.425,0.3413,0.00468,this_framework
+sweep_attunet_dbz0_e0123456_focaltv,attention_unet,focal_tversky,8.0,7856157.0,0.7157,0.15,0.6304,0.7241,0.6089,0.7253,0.4333,0.3808,0.00549,this_framework
+sweep_attunet_dbz0_e01234567_focaltv,attention_unet,focal_tversky,9.0,7856445.0,0.716,0.15,0.6264,0.722,0.6091,0.7177,0.4299,0.3701,0.00562,this_framework
+sweep_unetpp_dbz0_e01234567_focaltv,smp_unetpp,focal_tversky,9.0,10403027.0,0.7152,0.15,0.6258,0.7236,0.6174,0.6984,0.4153,0.3244,0.00333,this_framework
+sweep_unetpp_dbz0_e01234_focaltv,smp_unetpp,focal_tversky,6.0,10402163.0,0.7135,0.15,0.6248,0.7174,0.5776,0.7344,0.3986,0.3115,0.00413,this_framework
+sweep_unetpp_dbz0_e0123456_focaltv,smp_unetpp,focal_tversky,8.0,10402739.0,0.7153,0.15,0.6246,0.7264,0.6318,0.6754,0.4155,0.3271,0.00263,this_framework
+sweep_attunet_dbz0_e012345_focaltv,attention_unet,focal_tversky,7.0,7855869.0,0.7162,0.15,0.6242,0.7195,0.6007,0.7166,0.4192,0.362,0.0056,this_framework
+sweep_attunet_dbz0_e0123456789_focaltv,attention_unet,focal_tversky,11.0,7857021.0,0.7152,0.15,0.6229,0.7217,0.606,0.7129,0.4146,0.353,0.00518,this_framework
+sweep_unetpp_dbz0_e0123_focaltv,smp_unetpp,focal_tversky,5.0,10401875.0,0.7088,0.15,0.6217,0.7099,0.6014,0.6897,0.4096,0.318,0.00344,this_framework
+sweep_unetpp_dbz0_e012_focaltv,smp_unetpp,focal_tversky,4.0,10401587.0,0.7021,0.15,0.6183,0.7077,0.5748,0.7351,0.3748,0.2845,0.0039,this_framework
+sweep_attunet_dbz0_e01234_focaltv,attention_unet,focal_tversky,6.0,7855581.0,0.7141,0.15,0.6179,0.7197,0.6017,0.7009,0.418,0.3595,0.00483,this_framework
+sweep_unetpp_dbz0_e0123456789_focaltv,smp_unetpp,focal_tversky,11.0,10403603.0,0.7069,0.15,0.616,0.7058,0.5866,0.7109,0.3865,0.2784,0.004,this_framework
+sweep_unetpp_dbz0_e01_focaltv,smp_unetpp,focal_tversky,3.0,10401299.0,0.6942,0.4,0.6151,0.7017,0.5501,0.7611,0.3688,0.2976,0.00495,this_framework
+sweep_attunet_dbz0_e0123_focaltv,attention_unet,focal_tversky,5.0,7855293.0,0.7041,0.15,0.6144,0.708,0.5831,0.7335,0.3914,0.3216,0.00583,this_framework
+sweep_unetpp_dbz0_e012345_focaltv,smp_unetpp,focal_tversky,7.0,10402451.0,0.7099,0.15,0.6129,0.7187,0.6125,0.676,0.3922,0.2909,0.00501,this_framework
+sweep_attunet_dbz0_e012_focaltv,attention_unet,focal_tversky,4.0,7855005.0,0.6987,0.2,0.608,0.7037,0.5709,0.7268,0.373,0.3096,0.00512,this_framework
+sweep_unetpp_dbz0_e0_focaltv,smp_unetpp,focal_tversky,2.0,10401011.0,0.6869,0.25,0.603,0.6978,0.5639,0.7155,0.3725,0.2871,0.00417,this_framework
+sweep_attunet_dbz0_e01_focaltv,attention_unet,focal_tversky,3.0,7854717.0,0.6884,0.15,0.5973,0.698,0.582,0.6876,0.3807,0.3198,0.00483,this_framework
+sweep_attunet_dbz0_e0_focaltv,attention_unet,focal_tversky,2.0,7854429.0,0.6668,0.15,0.5961,0.6848,0.5448,0.7304,0.3545,0.2819,0.00932,this_framework

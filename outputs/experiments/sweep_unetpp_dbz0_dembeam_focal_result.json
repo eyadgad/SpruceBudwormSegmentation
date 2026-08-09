@@ -1,0 +1,38 @@
+{
+  "name": "sweep_unetpp_dbz0_dembeam_focal",
+  "model": "smp_unetpp",
+  "loss": "focal",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 10402163,
+  "best_val_dice_patch": 0.6605674239312689,
+  "best_epoch": 15,
+  "calibrated_threshold": 0.45,
+  "test_full_scene": {
+    "dice": 0.6032308463983175,
+    "iou": 0.4650898797100355,
+    "precision": 0.6112408212880123,
+    "recall": 0.654230763804843,
+    "f1": 0.6032308418780532,
+    "accuracy": 0.9762157947814437,
+    "boundary_iou": 0.3874538759878462,
+    "nsd": 0.2993152494515691,
+    "hd95": 87.72799645855683,
+    "assd": 26.40368436835943,
+    "dice_micro": 0.7020134124068397,
+    "iou_micro": 0.5408479710938877,
+    "precision_micro": 0.6691388920521534,
+    "recall_micro": 0.7382850555193726,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.004323567708333333,
+    "threshold": 0.45
+  }
+}

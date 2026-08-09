@@ -1,0 +1,194 @@
+# Experiment sweep: one entry per architecture/loss combination.
+# Each entry is deep-merged onto base_config.yaml (override wins).
+# run.py skips experiments whose result JSON already exists (resume-safe).
+
+experiments:
+
+  # ── 0. Baseline: U-Net + Dice+BCE ─────────────────────────────────────────
+  - name: unet_dice_bce
+    model:
+      name: unet
+      base_filters: 32
+    loss:
+      name: dice_bce
+      dice_weight: 0.5
+      bce_weight: 0.5
+
+  # ── 1. Attention U-Net + Focal (reference notebook best) ─────────────────
+  - name: attention_unet_focal
+    model:
+      name: attention_unet
+      base_filters: 32
+    loss:
+      name: focal
+      alpha: 0.25
+      gamma: 2.0
+
+  # ── 2. U-Net++ (SMP, efficientnet-b2) + Focal-Tversky ───────────────────
+  - name: smp_unetpp_focal_tversky
+    model:
+      name: smp_unetpp
+      encoder: efficientnet-b2
+      pretrained: true
+    loss:
+      name: focal_tversky
+      alpha: 0.3
+      beta: 0.7
+      gamma: 1.333
+    train:
+      accum_steps: 2     # efficientnet-b2 encoder is larger; accumulate 2 steps
+
+  # ── 3. DeepLabV3+ (SMP, resnet34) + Focal ───────────────────────────────
+  - name: smp_deeplabv3p_focal
+    model:
+      name: smp_deeplabv3p
+      encoder: resnet34
+      pretrained: true
+    loss:
+      name: focal
+      alpha: 0.25
+      gamma: 2.0
+
+  # ── 4. SegFormer MiT-B0 (SMP) + Focal-Tversky ───────────────────────────
+  - name: smp_segformer_focal_tversky
+    model:
+      name: smp_segformer
+      encoder_segformer: mit_b0
+      pretrained: true
+    loss:
+      name: focal_tversky
+      alpha: 0.3
+      beta: 0.7
+      gamma: 1.333
+
+  # ── 5. nnU-Net-style PlainConvUNet + Dice+BCE ───────────────────────────
+  #   (nnU-Net's 2D architecture recipe; see README "About nnunet")
+  - name: nnunet_dice_bce
+    model:
+      name: nnunet
+      base_filters: 32
+      num_stages: 5
+    loss:
+      name: dice_bce
+      dice_weight: 0.5
+      bce_weight: 0.5
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  PRECISION-FOCUSED NEXT ROUND (recommended after reviewing round-1 results)
+  #  Round 1 was recall-heavy / precision-limited (~0.50). These target that:
+  #  (a) dBZ>=0 target drops sub-zero noise (notebook's primary choice);
+  #  (b) balanced Tversky (alpha=beta=0.5 == Dice) penalises false positives more
+  #      than the recall-biased 0.3/0.7 used in round 1.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── 6. DeepLabV3+ (round-1 best) with a cleaner dBZ>=0 target ────────────
+  - name: smp_deeplabv3p_focal_dbz0
+    model:
+      name: smp_deeplabv3p
+      encoder: resnet34
+      pretrained: true
+    loss:
+      name: focal
+      alpha: 0.25
+      gamma: 2.0
+    target:
+      mode: threshold
+      dbz_threshold: 0.0
+
+  # ── 7. Attention U-Net + Tversky biased toward precision (alpha>beta) ────
+  - name: attention_unet_tversky_precision
+    model:
+      name: attention_unet
+      base_filters: 32
+    loss:
+      name: tversky
+      tversky_alpha: 0.7   # penalise false positives more
+      tversky_beta: 0.3
+
+  # ── 8. Richer inputs: 6 TH elevations + per-scan beam height ────────────
+  #   Tests whether vertical structure helps separate dispersal from clutter
+  #   (the main input-side lever). Requires norm stats for these channels ->
+  #   re-run `python -m src.data_prep` first (they are in base data_prep.norm_channels).
+  - name: smp_deeplabv3p_focal_richchannels
+    channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, height_e0, dem, bh_e0, valid_mask]
+    model:
+      name: smp_deeplabv3p
+      encoder: resnet34
+      pretrained: true
+    loss:
+      name: focal
+      alpha: 0.25
+      gamma: 2.0
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  BOUNDARY-FOCUSED (round 3) — target the boundary over-spread directly.
+  #  Boundary IoU (0.32) and NSD@2px (0.19) are far below region Dice (0.62),
+  #  i.e. the plume contour is the weak point. See docs/phase3_techniques.md.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── 9. DeepLabV3+ with Dice+BCE + boundary loss (Kervadec 2019) ─────────
+  - name: smp_deeplabv3p_dice_boundary
+    model:
+      name: smp_deeplabv3p
+      encoder: resnet34
+      pretrained: true
+    loss:
+      name: dice_boundary
+      pos_weight: 10.0
+      boundary_weight: 0.5
+
+  # ── 10. U-Net++ with Focal-Tversky + soft boundary labels (SVLS) ────────
+  - name: smp_unetpp_focal_tversky_soft
+    model:
+      name: smp_unetpp
+      encoder: efficientnet-b2
+      pretrained: true
+    loss:
+      name: focal_tversky
+      alpha: 0.3
+      beta: 0.7
+      gamma: 1.333
+    target:
+      soft_sigma: 1.5
+    train:
+      accum_steps: 2
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  ROUND 4 — COMBINE the two proven data levers. In round 3, dBZ>=0 target gave
+  #  the biggest gains (precision 0.60, boundary_iou 0.39, NSD 0.29, 3x fewer
+  #  false alarms) and rich channels gave the best boundary_iou among 6ch. Neither
+  #  prior run combined them -> expected best single models.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── 11. DeepLabV3+ : rich channels + dBZ>=0 target ───────────────────────
+  - name: smp_deeplabv3p_focal_rich_dbz0
+    channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, height_e0, dem, bh_e0, valid_mask]
+    model:
+      name: smp_deeplabv3p
+      encoder: resnet34
+      pretrained: true
+    loss:
+      name: focal
+      alpha: 0.25
+      gamma: 2.0
+    target:
+      mode: threshold
+      dbz_threshold: 0.0
+
+  # ── 12. U-Net++ (best round-3 arch) : rich channels + dBZ>=0 target ──────
+  - name: smp_unetpp_focal_tversky_rich_dbz0
+    channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, height_e0, dem, bh_e0, valid_mask]
+    model:
+      name: smp_unetpp
+      encoder: efficientnet-b2
+      pretrained: true
+    loss:
+      name: focal_tversky
+      alpha: 0.3
+      beta: 0.7
+      gamma: 1.333
+    target:
+      mode: threshold
+      dbz_threshold: 0.0
+    train:
+      accum_steps: 2

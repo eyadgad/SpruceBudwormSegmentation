@@ -1,0 +1,119 @@
+# Base configuration — all experiments inherit and override from this.
+# See src/config.py for validation rules.
+
+data:
+  root: "Data"
+  cleaned_subdir: "Cleaned_Date_2013_2019"
+  matched_csv: "matched_samples.csv"
+  artifacts_dir: "artifacts"
+
+# Split: per-year STRATIFIED 70/20/10 — each year contributes to every split, so
+# the same split is shared across all experiments and every year is represented.
+# (mode: year + years:{...} instead holds out whole years, leakage-free but not
+# every year in every split.)
+split:
+  mode: stratified
+  fractions:
+    train: 0.70
+    val:   0.20
+    test:  0.10
+  seed: 42
+
+# Input channels (ETA_raw unavailable locally — see progress.md)
+channels:
+  - th_e0        # TH reflectivity, elevation 0 (lowest)
+  - th_e1        # TH reflectivity, elevation 1
+  - th_e2        # TH reflectivity, elevation 2
+  - dem          # static DEM (terrain height, m)
+  - bh_e0        # static beam-height-ASL, level 0
+  - valid_mask   # binary: 1 where radar echo present
+
+# Ground-truth binary mask: isfinite(dBZ) — same as reference notebook
+target:
+  mode: isfinite
+  dbz_threshold: 0.0   # unused when mode=isfinite, kept for threshold experiments
+  soft_sigma: 0.0      # >0 = SVLS-style soft boundary labels (train only), e.g. 1.5
+
+# Negatives (all-background scenes): include at 30% of positives per split
+negatives:
+  include: true
+  ratio: 0.3
+
+# Patch extraction
+patch:
+  size: 256              # px; must be multiple of 32
+  patches_per_image: 16
+  pos_sample_rate: 0.5   # 50% positive-centred patches. The reference notebook
+                         # lowered this from 0.7->0.5 because 0.7 over-trained on
+                         # dense positives, hurting precision / full-scene Dice.
+  hard_pos_rate: 0.3     # of those, 30% centred on a positive pixel cluster
+
+# Training
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 3.0e-4
+  weight_decay: 1.0e-5
+  warmup_epochs: 3
+  patience: 100         # early-stop after N epochs without val-dice improvement
+  es_tolerance: 1.0e-3
+  amp: true              # mixed-precision (requires CUDA)
+  amp_dtype: bfloat16    # bfloat16 (recommended, no overflow) or float16. bf16 avoids
+                         # the fp16 NaN that corrupts transformer BatchNorm buffers.
+  accum_steps: 1         # gradient accumulation (increase for large models / low VRAM)
+  num_workers: 0         # Windows: num_workers>0 deadlocks with CUDA pin_memory
+  pin_memory: false
+  snapshot_every: 5      # save resume snapshot every N epochs
+  scene_cache: 16        # LRU scene cache per DataLoader worker
+
+# Augmentation
+augment:
+  enabled: true
+  hflip: true
+  vflip: true
+  rot90: true
+
+# Full-scene evaluation (sliding-window + TTA + threshold calibration)
+eval:
+  patch_size: 256
+  overlap: 0.5
+  tta: true
+  gaussian_window: true    # nnU-Net Gaussian patch weighting (suppresses tiling seams)
+  boundary_metrics: true   # also report Boundary IoU, NSD@tau, HD95, ASSD
+  nsd_tolerance: 2.0       # tau (pixels) for Normalized Surface Dice
+  threshold_range: [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
+  calib_max_scenes: 50   # use at most N val scenes for threshold calibration (speed)
+
+# Default model (overridden per experiment)
+model:
+  name: unet
+  base_filters: 32
+
+# Default loss (overridden per experiment)
+loss:
+  name: dice_bce
+  dice_weight: 0.5
+  bce_weight: 0.5
+
+output_dir: "outputs"
+
+# Data preparation settings
+data_prep:
+  norm_max_scenes: 200   # max training scenes used to compute per-channel z-score stats
+  # Compute normalization stats for this SUPERSET of channels so experiments can
+  # vary `channels` without re-running prep. Must cover every channel any
+  # experiment uses (re-run `python -m src.data_prep` after editing this).
+  norm_channels:
+    - th_e0
+    - th_e1
+    - th_e2
+    - th_e3
+    - th_e4
+    - th_e5
+    - th_e6
+    - th_e7
+    - th_e8
+    - th_e9
+    - height_e0
+    - dem
+    - bh_e0
