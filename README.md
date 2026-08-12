@@ -51,6 +51,37 @@ Other entry points (also via the venv python):
 Outputs land in `outputs/`: `checkpoints/`, per-experiment `experiments/*_result.json`
 and `*_history.csv`, and `comparison_table.{csv,md}`.
 
+## Export the evaluation dashboard
+
+The static dashboard is expected in the sibling
+`../sprucebudworm_progress.github.io` checkout and the raw radar archive in
+`../Data`. Generate its compressed Sample Explorer assets without running a
+model by migrating the existing 480×480 probability and ground-truth PNGs:
+
+```bat
+.venv\Scripts\python.exe scripts\export_dashboard_data.py --only packs --data-root ..\Data --site-dir ..\sprucebudworm_progress.github.io
+.venv\Scripts\python.exe scripts\test_packed_samples.py --data-root ..\Data --site-dir ..\sprucebudworm_progress.github.io
+```
+
+Both path arguments have the sibling locations above as defaults and may be
+omitted in the standard workspace. The pack stage refuses to publish partial
+coverage: `samples.json` must contain exactly 615 unique timestamps and every
+timestamp must resolve to a raw `XAM_<timestamp>_filtered_ppi.nc` volume.
+
+Each scene becomes one deterministic gzip-compressed `SBW1` file plus one
+120×120 lossless WebP thumbnail. A pack contains all four 8-bit probability
+maps, one bit per ground-truth pixel, and categorical reflectivity. The latter
+is computed in physical dBZ from the finite per-cell maximum of raw `TH[0:6]`,
+then block-maximum downsampled from 960×960 to 480×480. `samples.json` records
+the format, model order, URL templates, dimensions, version, and reflectivity
+source under `sample_assets`.
+
+The four viewer models are declared once in `VIEWER_MODELS`. This checkout has
+the selected Attention UNet and comparison UNet++ checkpoints; the validated
+7- and 8-elevation planes and metrics are preserved from the existing packs
+when their checkpoints are unavailable. Supplying those two checkpoint files
+lets the same `predict`/`images` stages regenerate all four models directly.
+
 ## How it works
 
 - **Config** (`configs/base_config.yaml` + `configs/experiments.yaml`): every experiment

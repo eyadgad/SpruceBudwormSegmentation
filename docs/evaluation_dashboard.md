@@ -28,9 +28,9 @@ Python (offline)                          Browser (online)
 ────────────────                          ────────────────
 outputs/experiments/*  ─┐
 artifacts/manifest.csv ─┼─► export_dashboard_data.py ─► data/*.json ─► section module
-outputs/checkpoints/*  ─┘         (4 stages)            data/samples/*.png    │
-                                                                              ▼
-                                                            lib/{metrics,charts,table,data}.js
+outputs/checkpoints/*  ─┤         (5 stages)             *.sbw.gz + *.webp    │
+Data/*_filtered_ppi.nc ─┘                                                   ▼
+                                             lib/{data,sample-pack,metrics,charts,table}.js
 ```
 
 Analysis and presentation are kept apart:
@@ -50,35 +50,65 @@ is what gives route-level code splitting on a site with no bundler.
 
 ## 3. The export pipeline
 
-`scripts/export_dashboard_data.py`, four independent stages (`--only`):
+`scripts/export_dashboard_data.py` has five independently selectable stages
+(`--only`):
 
 | Stage | Reads | Writes | Notes |
 |---|---|---|---|
 | `experiments` | `outputs/experiments/*_{result,config,history,train.log}` | `experiments.json`, `histories.json` | Parses wall-clock duration and per-epoch seconds out of the timestamped logs |
 | `dataset` | `artifacts/manifest.csv`, `artifacts/targets/*.npz` | `dataset.json`, `summary.json` | Computes target area under all three label definitions; audits night leakage |
-| `predict` | checkpoints + every val/test scene | `samples.json`, `threshold.json` | Full 960×960 sliding-window inference for two models |
-| `images` | checkpoints + test/val scenes | `data/samples/*.png` | 4 layers per scene, 615 scenes |
+| `predict` | registered checkpoints + every val/test scene | `samples.json`, `threshold.json` | Full 960×960 inference; preserves validated records for locally absent checkpoints |
+| `images` | checkpoints + test/val scenes | legacy `data/samples/*.png` | Migration intermediate; not delivered by the website |
+| `packs` | legacy probability/GT PNGs + raw PPI volumes | `data/samples/*.sbw.gz`, `*.webp`, `samples.json` metadata | GPU-free, deterministic migration for all 615 scenes |
 
-`predict` is the expensive stage (~40 min for 615 scenes × 2 models). Per scene
+All four viewer entries come from the shared `VIEWER_MODELS` registry. The
+repository currently includes checkpoints for the selected Attention UNet and
+comparison UNet++; when the registered 7- and 8-elevation checkpoints are not
+present, `predict` preserves their already-validated scene metrics and `images`
+reuses their exact planes from the current SBW1 packs. If all checkpoints are
+supplied, both stages regenerate all four models directly. Model-artifact
+fingerprints prevent a changed checkpoint from being paired with stale packs.
+
+`predict` is the expensive GPU stage (615 scenes × 4 registered models). Per scene
 it records the confusion counts, region metrics, boundary metrics, connected
 components and mean radial distance of each error type; it also accumulates
 global threshold sweeps, probability histograms, reliability bins and 12-ring
 radial error profiles.
 
-### Why probability maps are PNGs
+### Packed Sample Explorer assets
 
-Storing the probability map as an 8-bit greyscale PNG lets the browser
-re-threshold a scene in a canvas with zero further network traffic, which is
-what makes the threshold slider in the sample explorer instant. The trade-off is
-resolution: layers are downsampled 960 → 480 by block **maximum** (so thin
-plumes survive), which thickens both masks and makes the in-browser readout
-optimistic by a few hundredths of Dice. This is stated in the UI next to the
-readout, and every reported metric is computed at full resolution in Python.
+The deployed viewer does not fetch separate full-scene images. Each scene has
+one deterministic gzip-compressed `SBW1` file containing four 480×480 `uint8`
+probability planes in `samples.json.models` order, an MSB-first one-bit ground-
+truth mask, and one byte of categorical reflectivity per pixel. Opening a scene
+therefore makes one layer request; changing models or moving the threshold
+repaints the decoded arrays without another request. A separate 120×120
+lossless WebP is loaded lazily for each visible grid card.
 
-Coverage is both the test and validation splits — all 615 evaluated scenes,
-2,460 PNGs, 37 MB. `samples.json` carries an `image_splits` field listing the
-splits that actually have layers, so the UI reports coverage from the data
-rather than assuming it, and a test asserts the two agree.
+Reflectivity comes from physical values rather than a normalized model channel.
+For each raw volume the exporter takes the finite per-cell maximum across the
+lowest six scans (`TH[0:6]`), then applies a NaN-aware 960→480 block maximum so
+small strong returns remain visible. The result is encoded as background plus
+six dBZ colour categories. All-six-missing cells remain background/black.
+
+The 8-bit probability precision and 480×480 block-max preview behavior are
+unchanged from the former PNG delivery. Consequently, the interactive preview
+can still be a few hundredths of Dice optimistic; authoritative metrics in
+`samples.json` are computed at 960×960. Coverage is both test and validation:
+615 packs plus 615 thumbnails, capped by validation at 21 MiB total.
+
+In the standard sibling-directory workspace, migration and validation are:
+
+```bat
+.venv\Scripts\python.exe scripts\export_dashboard_data.py --only packs --data-root ..\Data --site-dir ..\sprucebudworm_progress.github.io
+.venv\Scripts\python.exe scripts\test_packed_samples.py --data-root ..\Data --site-dir ..\sprucebudworm_progress.github.io
+```
+
+Both path options default to the paths shown. Before writing, the pack stage
+requires exactly 615 unique `samples.json` timestamps and 615 matching raw PPI
+files; no lowest-scan or partial-coverage fallback is allowed. On success it
+adds the format, dimensions, model order, URL templates, cache version, and
+`max_th_e0_th_e5` source declaration under `samples.json.sample_assets`.
 
 ### Reading the overlay without relying on colour
 
@@ -99,11 +129,13 @@ text label cannot be placed on each region.
 
 ## 4. Verification
 
-Two test suites, both runnable and both currently passing:
+The exporter has two Python validation suites, with browser-library tests in the
+website checkout:
 
 ```bash
 .venv\Scripts\python.exe scripts\test_dashboard.py   # 60+ checks
-node sprucebudworm_progress.github.io/assets/js/lib/metrics.test.js   # 49 checks
+.venv\Scripts\python.exe scripts\test_packed_samples.py --data-root ..\Data --site-dir ..\sprucebudworm_progress.github.io
+node ..\sprucebudworm_progress.github.io\assets\js\lib\metrics.test.js
 ```
 
 `test_dashboard.py` covers:
@@ -116,7 +148,8 @@ node sprucebudworm_progress.github.io/assets/js/lib/metrics.test.js   # 49 check
   `TP+FP = predicted area`, stored Dice matches its own counts, all metrics in
   `[0,1]`);
 - split counts against `split_summary.json`, label-threshold nesting
-  (`dbz5 ≤ dbz0 ≤ isfinite`), threshold-sweep monotonicity, image completeness;
+  (`dbz5 ≤ dbz0 ≤ isfinite`), threshold-sweep monotonicity, and declared pack/
+  thumbnail completeness;
 - that the site's selection wording still matches the data — it asserts the
   selected run does **not** lead every metric, and tells you to update
   `experiments.js` if that ever changes.
@@ -124,6 +157,13 @@ node sprucebudworm_progress.github.io/assets/js/lib/metrics.test.js   # 49 check
 `metrics.test.js` covers the statistics helpers against hand-computed values,
 including bootstrap determinism (same input → identical interval) and Wilcoxon
 behaviour on shifted and identical inputs.
+
+`test_packed_samples.py` parses every SBW1 header and payload, checks exact
+probability and ground-truth round trips against the migration PNGs, regenerates
+the six-elevation reflectivity composite from raw NetCDF, compares threshold
+metrics at 0.02, 0.15, 0.50, and 0.90, validates every WebP, and enforces the
+615-pack/615-thumbnail and 21 MiB limits. After legacy PNG removal it can run
+with `--skip-legacy` for structural and raw-reflectivity validation.
 
 Browser verification performed: all 13 routes render with no console errors and
 no failed requests; filters, sorting, pagination, threshold slider, layer
@@ -145,9 +185,10 @@ Measured on a cold load of the overview:
 
 Techniques used: route-level dynamic `import()`; a 1 KB `summary.json` for
 sections that need only headline counts (instead of the 415 KB `dataset.json`);
-`loading="lazy"` thumbnails capped at 120 per grid; paginated tables; canvas
-re-thresholding instead of re-fetching; request de-duplication and caching in
-`data.js`; hand-written SVG instead of a charting library.
+`loading="lazy"` WebP thumbnails capped at 120 per grid; one compressed request
+per opened scene; a three-scene decoded LRU; canvas re-thresholding/model
+switching without re-fetching; paginated tables; request de-duplication and
+caching in `data.js`; hand-written SVG instead of a charting library.
 
 ## 6. Findings the dashboard surfaced
 
@@ -182,7 +223,6 @@ take, rather than silently omitted:
 | Per-channel input distributions | A pass over the source netCDF recording histograms |
 | Per-scene optimal threshold | One extra sweep pass in `stage_predict` (~200 KB) |
 | Weather-conditioned performance | A weather table keyed by night |
-| Visual model-vs-model comparison | Run `stage_images` for the comparison checkpoint too |
 | Label-noise estimate | A second independent annotation |
 | True generalisation estimate | A night-disjoint split and a retrain |
 
