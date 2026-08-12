@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import export_dashboard_data as X  # noqa: E402
 
-DATA = ROOT / "sprucebudworm_progress.github.io" / "data"
+DATA = ROOT.parent / "sprucebudworm_progress.github.io" / "data"
 FAILS: list[str] = []
 
 
@@ -250,30 +250,55 @@ def test_experiments_file():
           "selected unexpectedly leads all metrics; update the wording in experiments.js")
 
 
-def test_images():
-    print("\n[artefacts] sample imagery")
+def test_sample_assets():
+    print("\n[artefacts] packed sample assets")
     sm = load("samples")
     d = DATA / "samples"
     if sm is None or not d.exists():
-        check("image folder exists", False)
+        check("sample asset folder exists", False)
         return
     declared = sm.get("image_splits")
     check("samples.json declares image_splits", bool(declared), declared)
+    assets = sm.get("sample_assets") or {}
+    model_order = [m.get("key") for m in sm.get("models", [])]
+    check("SBW1 gzip format declared", assets.get("format") == "sbw1-gzip", assets.get("format"))
+    check("six-elevation reflectivity declared",
+          assets.get("reflectivity_source") == "max_th_e0_th_e5",
+          assets.get("reflectivity_source"))
+    check("480x480 packed preview declared",
+          (assets.get("width"), assets.get("height")) == (480, 480),
+          (assets.get("width"), assets.get("height")))
+    check("120x120 thumbnail declared",
+          (assets.get("thumbnail_width"), assets.get("thumbnail_height")) == (120, 120),
+          (assets.get("thumbnail_width"), assets.get("thumbnail_height")))
+    check("pack model order matches samples.json models",
+          assets.get("model_order") == model_order, (assets.get("model_order"), model_order))
+    check("pack URL template declared",
+          assets.get("pack_path") == "data/samples/{ts}.sbw.gz", assets.get("pack_path"))
+    check("thumbnail URL template declared",
+          assets.get("thumbnail_path") == "data/samples/{ts}.webp", assets.get("thumbnail_path"))
+    check("sample asset cache version declared", bool(assets.get("version")), assets.get("version"))
+    check("model artifact version declared",
+          str(assets.get("model_artifact_version", "")).startswith("models-"),
+          assets.get("model_artifact_version"))
 
-    # every scene in a declared split must have all four layers, or the site
-    # would advertise imagery it cannot load
+    # Every scene in a declared split must have one pack and one WebP; otherwise
+    # the site would advertise pixel layers that it cannot open.
     expected = [s["ts"] for s in sm["samples"] if s["split"] in (declared or [])]
-    missing = [f"{t}_{suf}" for t in expected for suf in ("prob", "gt", "th", "thumb")
-               if not (d / f"{t}_{suf}.png").exists()]
-    check(f"all {len(expected)} scenes in {declared} have four layers", not missing, missing[:4])
-    check("file count = 4 per declared scene",
-          len(list(d.glob("*.png"))) == 4 * len(expected),
-          (len(list(d.glob("*.png"))), 4 * len(expected)))
+    missing = [name for t in expected for name in (f"{t}.sbw.gz", f"{t}.webp")
+               if not (d / name).exists()]
+    check(f"all {len(expected)} scenes in {declared} have a pack and thumbnail",
+          not missing, missing[:4])
+    packs, thumbs = list(d.glob("*.sbw.gz")), list(d.glob("*.webp"))
+    check("pack count matches declared coverage", len(packs) == len(expected),
+          (len(packs), len(expected)))
+    check("thumbnail count matches declared coverage", len(thumbs) == len(expected),
+          (len(thumbs), len(expected)))
 
     # and nothing outside the declared splits claims coverage
     undeclared = [s["ts"] for s in sm["samples"] if s["split"] not in (declared or [])]
-    stray = [t for t in undeclared if (d / f"{t}_prob.png").exists()]
-    check("no imagery outside the declared splits", not stray, stray[:3])
+    stray = [t for t in undeclared if (d / f"{t}.sbw.gz").exists() or (d / f"{t}.webp").exists()]
+    check("no packed assets outside the declared splits", not stray, stray[:3])
 
 
 def main():
@@ -282,7 +307,7 @@ def main():
                test_log_parse, test_files_exist, test_json_finite, test_samples_match_training,
                test_sample_consistency, test_dataset_split_matches_manifest,
                test_summary_matches_dataset, test_threshold_file, test_experiments_file,
-               test_images]:
+               test_sample_assets]:
         try:
             fn()
         except Exception as e:  # a crashing test is a failing test
