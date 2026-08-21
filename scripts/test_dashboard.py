@@ -101,13 +101,13 @@ def load(name):
 
 def test_files_exist():
     print("\n[artefacts] generated files")
-    for n in ["experiments", "histories", "dataset", "summary", "samples", "threshold"]:
+    for n in ["experiments", "histories", "dataset", "summary", "samples", "threshold", "presence"]:
         check(f"{n}.json exists", (DATA / f"{n}.json").exists())
 
 
 def test_json_finite():
     print("\n[artefacts] no NaN/Infinity leaked into JSON")
-    for n in ["experiments", "dataset", "summary", "samples", "threshold"]:
+    for n in ["experiments", "dataset", "summary", "samples", "threshold", "presence"]:
         p = DATA / f"{n}.json"
         if not p.exists():
             continue
@@ -222,6 +222,72 @@ def test_threshold_file():
     check("radial arrays align", len(r["tp"]) == len(r["fp"]) == len(r["fn"]) == len(r["gt"]) == len(r["edges_km"]) - 1)
 
 
+def test_presence_file():
+    print("\n[integrity] presence.json")
+    pr = load("presence")
+    if pr is None:
+        check("presence.json present", False)
+        return
+    check("presence schema version", pr.get("schema_version") == 1, pr.get("schema_version"))
+    check("all four viewer models", len(pr.get("models", [])) == 4,
+          [m.get("key") for m in pr.get("models", [])])
+    check("scan/night defaults are unambiguous",
+          pr.get("defaults", {}).get("scan_operating_point") == "any_cell" and
+          pr.get("defaults", {}).get("night_operating_point") == "validation_selected",
+          pr.get("defaults"))
+    cohort = pr["cohort"]
+    check("presence covers all 615 evaluation scans", cohort["evaluation_scans"] == 615,
+          cohort["evaluation_scans"])
+    check("full/subset night truth agrees",
+          cohort["subset_full_night_truth_disagreements"] == 0,
+          cohort["subset_full_night_truth_disagreements"])
+    check("test-night training exposure is explicit",
+          (cohort["training_exposure"]["test"]["nights_seen_in_train"],
+           cohort["training_exposure"]["test"]["nights_total"]) == (110, 113),
+          cohort["training_exposure"]["test"])
+    check("validation/test night overlap is explicit",
+          cohort["night_overlap"]["validation_test"] == 93,
+          cohort["night_overlap"])
+
+    for model in pr["models"]:
+        analyses = [("scan", model["scan"]),
+                    ("night max", model["night"]["max"]),
+                    ("night mean", model["night"]["mean"])]
+        for label, analysis in analyses:
+            cutoff = analysis["selected_cutoff"]["cells"]
+            for split in ("validation", "test"):
+                block = analysis["splits"][split]
+                selected = block["operating_points"]["validation_selected"]
+                check(f"{model['key']} {label} {split}: locked validation cutoff",
+                      selected["cutoff"] == cutoff, (selected["cutoff"], cutoff))
+                confusion = selected["confusion"]
+                check(f"{model['key']} {label} {split}: confusion count",
+                      sum(confusion.values()) == block["n"], (confusion, block["n"]))
+                roc = block["roc"]
+                fpr = [p["false_positive_rate"] for p in roc["points"]]
+                tpr = [p["true_positive_rate"] for p in roc["points"]]
+                check(f"{model['key']} {label} {split}: ROC monotonic",
+                      fpr == sorted(fpr) and tpr == sorted(tpr))
+                check(f"{model['key']} {label} {split}: AUC finite",
+                      roc["auc"] is not None and 0 <= roc["auc"] <= 1, roc["auc"])
+                if label.startswith("night"):
+                    check(f"{model['key']} {label} {split}: two-sided Mann-Whitney",
+                          block["mann_whitney"]["alternative"] == "two-sided" and
+                          block["mann_whitney"]["p_value"] is not None)
+                else:
+                    check(f"{model['key']} {label} {split}: no cluster-naive Mann-Whitney",
+                          "mann_whitney" not in block)
+                summaries = block["score_summary"]
+                check(f"{model['key']} {label} {split}: p05/p95 summaries",
+                      all(s.get("p05") is not None and s.get("p95") is not None
+                          for s in summaries.values()))
+            if label.startswith("night"):
+                records = analysis["splits"]["test"]["records"]
+                check(f"{model['key']} {label}: night coverage fields",
+                      all(0 < r["evaluated_scan_count"] <= r["manifest_scan_count"] and
+                          0 < r["coverage_fraction"] <= 1 for r in records))
+
+
 def test_experiments_file():
     print("\n[integrity] experiments.json")
     ex = load("experiments")
@@ -306,7 +372,8 @@ def main():
     for fn in [test_num_json_safety, test_radial_index, test_components, test_downsample,
                test_log_parse, test_files_exist, test_json_finite, test_samples_match_training,
                test_sample_consistency, test_dataset_split_matches_manifest,
-               test_summary_matches_dataset, test_threshold_file, test_experiments_file,
+               test_summary_matches_dataset, test_threshold_file, test_presence_file,
+               test_experiments_file,
                test_sample_assets]:
         try:
             fn()

@@ -14,6 +14,8 @@ Stages (each can be run alone with --only):
                checkpoints are absent,
                producing per-scene metrics, threshold sweeps, calibration
                histograms, connected components and radial error profiles
+  presence     GPU-free scan/night presence analysis from samples.json and
+               dataset.json, with validation-selected operating cutoffs
   images       legacy PNG intermediates for probability/ground truth migration
   packs        GPU-free SBW1 packs + WebP thumbnails for the sample explorer
 
@@ -385,6 +387,36 @@ def _public_model_metrics(values: Dict, is_positive: bool) -> Dict:
     return {k: values.get(k) for k in keys}
 
 
+def _validate_preserved_model_lineage(previous: Dict, reused_models,
+                                      expected_artifact_version: str) -> None:
+    """Refuse to relabel preserved scene metrics as a changed model artifact."""
+    if not reused_models:
+        return
+    previous_version = (previous.get("sample_assets") or {}).get("model_artifact_version")
+    if previous_version != expected_artifact_version:
+        raise SystemExit("cannot reuse missing-checkpoint scene metrics: previous "
+                         f"model_artifact_version={previous_version!r}, expected "
+                         f"{expected_artifact_version!r}")
+
+    previous_models = list(previous.get("models") or [])
+    for spec, threshold in reused_models:
+        matches = [m for m in previous_models if m.get("key") == spec["key"]]
+        if len(matches) != 1:
+            raise SystemExit("cannot reuse missing-checkpoint scene metrics: previous "
+                             f"model key {spec['key']!r} has {len(matches)} matches")
+        old = matches[0]
+        try:
+            old_threshold = float(old["thr"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit("cannot reuse missing-checkpoint scene metrics: previous "
+                             f"model {spec['key']!r} has no numeric threshold") from exc
+        if old.get("name") != spec["name"] or old_threshold != float(threshold):
+            raise SystemExit("cannot reuse missing-checkpoint scene metrics: model lineage "
+                             f"changed for {spec['key']!r}; previous name/thr="
+                             f"{old.get('name')!r}/{old.get('thr')!r}, expected "
+                             f"{spec['name']!r}/{float(threshold)!r}")
+
+
 def stage_predict(splits=("test", "val"), limit=None) -> None:
     print("[predict]")
     import torch
@@ -408,6 +440,10 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
         print(f"  {spec['key']}={spec['name']} thr={threshold} [{source}]")
     if any(model is None for _spec, model, _cfg, _threshold in loaded_models[:2]):
         raise SystemExit("the selected and comparison checkpoints are required by stage predict")
+    current_model_version = _model_artifact_version()
+    reused_models = [(spec, threshold) for spec, model, _cfg, threshold in loaded_models
+                     if model is None]
+    _validate_preserved_model_lineage(previous, reused_models, current_model_version)
     THR = loaded_models[0][3]
     THR2 = loaded_models[1][3]
     ring_idx, ring_edges, dist_km = _radial_index()
@@ -529,7 +565,6 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
     # Preserve valid packed-asset metadata across a metrics rebuild. This makes
     # the default predict stage safe after the PNG-to-pack migration.
     sample_timestamps = {int(s["ts"]) for s in samples}
-    current_model_version = _model_artifact_version()
     previous_timestamps = {int(s["ts"]) for s in previous.get("samples", [])}
     previous_assets = previous.get("sample_assets") or {}
     assets_match = (previous_timestamps == sample_timestamps and
@@ -587,6 +622,34 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
                        "fn": [int(v) for v in ring_acc[s]["fn"]],
                        "gt": [int(v) for v in ring_acc[s]["gt"]]} for s in splits},
     })
+
+
+# --------------------------------------------------------------------------
+# stage: presence
+# --------------------------------------------------------------------------
+def stage_presence() -> None:
+    """Build scan/night binary-detection results without model inference."""
+    print("[presence]")
+    from src.presence import analyze_presence
+
+    samples_path = DATA_OUT / "samples.json"
+    dataset_path = DATA_OUT / "dataset.json"
+    missing = [str(p) for p in (samples_path, dataset_path) if not p.exists()]
+    if missing:
+        raise SystemExit("presence stage requires generated samples.json and dataset.json; "
+                         f"missing: {', '.join(missing)}")
+    samples_doc = json.loads(samples_path.read_text(encoding="utf-8"))
+    dataset_doc = json.loads(dataset_path.read_text(encoding="utf-8"))
+    model_keys = tuple(m.get("key") for m in samples_doc.get("models", []))
+    if model_keys != VIEWER_MODEL_KEYS:
+        raise SystemExit(f"presence stage requires viewer models {list(VIEWER_MODEL_KEYS)}; "
+                         f"got {list(model_keys)}")
+    result = analyze_presence(
+        samples_doc,
+        dataset_doc,
+        generated=datetime.now().isoformat(timespec="seconds"),
+    )
+    _w("presence.json", result)
 
 
 # --------------------------------------------------------------------------
@@ -722,23 +785,41 @@ def _asset_version(paths: List[Path]) -> str:
     return f"{SBW_VERSION_PREFIX}-{digest.hexdigest()[:12]}"
 
 
-def _model_artifact_version() -> str:
-    """Fingerprint model definitions, results, inference code and checkpoints."""
+def _model_artifact_version(root: Path | None = None,
+                            exporter_path: Path | None = None,
+                            viewer_models=None) -> str:
+    """Fingerprint every input that can change exported probability/area data."""
+    root = Path(root) if root is not None else ROOT
+    exporter_path = (Path(exporter_path) if exporter_path is not None
+                     else Path(__file__).resolve())
+    viewer_models = tuple(viewer_models) if viewer_models is not None else VIEWER_MODELS
     digest = hashlib.sha256()
     paths = [
-        ROOT / "configs" / "base_config.yaml",
-        ROOT / "configs" / "experiments_elev.yaml",
-        ROOT / "src" / "dataset.py",
-        ROOT / "src" / "engine.py",
+        root / "configs" / "base_config.yaml",
+        root / "configs" / "experiments_elev.yaml",
+        root / "artifacts" / "norm_stats.json",
+        root / "src" / "channels.py",
+        root / "src" / "config.py",
+        root / "src" / "checkpoint.py",
+        root / "src" / "dataset.py",
+        root / "src" / "engine.py",
+        exporter_path,
     ]
-    for spec in VIEWER_MODELS:
+    # Includes create_model in models/__init__.py and every architecture module.
+    paths.extend(sorted((root / "src" / "models").glob("*.py"),
+                        key=lambda p: p.as_posix()))
+    for spec in viewer_models:
         digest.update(json.dumps(spec, sort_keys=True).encode("utf-8"))
         paths.extend([
-            ROOT / "outputs" / "experiments" / f"{spec['name']}_result.json",
-            ROOT / "outputs" / "checkpoints" / f"{spec['name']}_best.pt",
+            root / "outputs" / "experiments" / f"{spec['name']}_result.json",
+            root / "outputs" / "checkpoints" / f"{spec['name']}_best.pt",
         ])
     for path in paths:
-        digest.update(str(path.relative_to(ROOT)).encode("utf-8"))
+        try:
+            label = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            label = path.resolve()
+        digest.update(str(label).replace("\\", "/").encode("utf-8"))
         if not path.exists():
             digest.update(b"\0MISSING\0")
             continue
@@ -901,11 +982,20 @@ def stage_images(size=480, thumb=120, splits=("test", "val"), limit=None) -> Non
     man, norm = data_prep.load_artifacts(base)
     loaded_models = []
     for spec in VIEWER_MODELS:
-        model, cfg, _threshold = _load_model(spec["name"], device, required=False)
-        loaded_models.append((spec, model, cfg))
-    missing_keys = [spec["key"] for spec, model, _cfg in loaded_models if model is None]
+        model, cfg, threshold = _load_model(spec["name"], device, required=False)
+        loaded_models.append((spec, model, cfg, threshold))
+    reused_models = [(spec, threshold) for spec, model, _cfg, threshold in loaded_models
+                     if model is None]
+    missing_keys = [spec["key"] for spec, _threshold in reused_models]
     if missing_keys:
         print(f"  missing checkpoints for {', '.join(missing_keys)}; reusing those planes from existing SBW1 packs")
+        samples_path = DATA_OUT / "samples.json"
+        if not samples_path.exists():
+            raise SystemExit("cannot reuse missing-checkpoint packed probability planes: "
+                             f"missing lineage metadata {samples_path}")
+        previous = json.loads(samples_path.read_text(encoding="utf-8"))
+        _validate_preserved_model_lineage(
+            previous, reused_models, _model_artifact_version())
 
     rows = man[man.split.isin(splits)].to_dict("records")
     if limit:
@@ -916,7 +1006,7 @@ def stage_images(size=480, thumb=120, splits=("test", "val"), limit=None) -> Non
         ts = int(r["timestamp"])
         scene_truth = None
         packed_probabilities = None
-        for spec, model, cfg in loaded_models:
+        for spec, model, cfg, _threshold in loaded_models:
             if model is None:
                 if packed_probabilities is None:
                     pack_path = IMG_OUT / f"{ts}.sbw.gz"
@@ -951,9 +1041,17 @@ def stage_images(size=480, thumb=120, splits=("test", "val"), limit=None) -> Non
             print(f"  {i}/{len(rows)}")
 
 
+def _validate_stage_request(todo, limit) -> None:
+    """Reject a partial predict+presence rebuild before either stage writes."""
+    if limit is not None and "predict" in todo and "presence" in todo:
+        raise SystemExit("--limit cannot be combined with predict+presence: presence requires "
+                         "the complete validation/test sample set. Use --only predict for a "
+                         "limited smoke run.")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="experiments,dataset,predict")
+    ap.add_argument("--only", default="experiments,dataset,predict,presence")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--img-splits", default="test,val")
     ap.add_argument("--data-root", type=Path, default=ROOT.parent / "Data",
@@ -963,12 +1061,15 @@ def main():
     args = ap.parse_args()
     configure_site(args.site_dir)
     todo = [s.strip() for s in args.only.split(",") if s.strip()]
+    _validate_stage_request(todo, args.limit)
     if "experiments" in todo:
         stage_experiments()
     if "dataset" in todo:
         stage_dataset()
     if "predict" in todo:
         stage_predict(limit=args.limit)
+    if "presence" in todo:
+        stage_presence()
     if "images" in todo:
         stage_images(splits=tuple(args.img_splits.split(",")), limit=args.limit)
     if "packs" in todo:

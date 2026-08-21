@@ -46,6 +46,8 @@ Other entry points (also via the venv python):
 .venv\Scripts\python -m src.data_prep      :: one-time data prep (auto-runs if artifacts missing)
 .venv\Scripts\python -m src.evaluate --split test            :: re-evaluate checkpoints, no retraining
 .venv\Scripts\python -m src.evaluate --split test --ensemble :: ensemble of finished members
+.venv\Scripts\python scripts\export_dashboard_data.py --only presence :: GPU-free scan/night presence analysis
+.venv\Scripts\python scripts\test_presence.py                 :: focused presence-analysis tests
 ```
 
 Outputs land in `outputs/`: `checkpoints/`, per-experiment `experiments/*_result.json`
@@ -75,6 +77,17 @@ is computed in physical dBZ from the finite per-cell maximum of raw `TH[0:6]`,
 then block-maximum downsampled from 960×960 to 480×480. `samples.json` records
 the format, model order, URL templates, dimensions, version, and reflectivity
 source under `sample_assets`.
+
+The GPU-free `presence` export reads the authoritative full-resolution
+`pred_area` and `gt_area` values already stored in `samples.json`, joins them to
+the full manifest metadata in `dataset.json`, and writes `presence.json`. It
+reports scan-level and UTC-noon-to-noon night-level ROC/AUC, night-level
+two-sided Mann–Whitney tests, any-cell operating points, and validation-selected Youden
+cutoffs applied unchanged to test. Night truth comes from every manifest scan
+in that night; each exported night record includes evaluated versus manifest
+scan coverage and whether the night appeared in training. This is intentionally
+separate from the 480×480 packed previews, whose block-max downsampling would
+change area counts.
 
 The four viewer models are declared once in `VIEWER_MODELS`. This checkout has
 the selected Attention UNet and comparison UNet++ checkpoints; the validated

@@ -50,7 +50,7 @@ is what gives route-level code splitting on a site with no bundler.
 
 ## 3. The export pipeline
 
-`scripts/export_dashboard_data.py` has five independently selectable stages
+`scripts/export_dashboard_data.py` has six independently selectable stages
 (`--only`):
 
 | Stage | Reads | Writes | Notes |
@@ -58,6 +58,7 @@ is what gives route-level code splitting on a site with no bundler.
 | `experiments` | `outputs/experiments/*_{result,config,history,train.log}` | `experiments.json`, `histories.json` | Parses wall-clock duration and per-epoch seconds out of the timestamped logs |
 | `dataset` | `artifacts/manifest.csv`, `artifacts/targets/*.npz` | `dataset.json`, `summary.json` | Computes target area under all three label definitions; audits night leakage |
 | `predict` | registered checkpoints + every val/test scene | `samples.json`, `threshold.json` | Full 960×960 inference; preserves validated records for locally absent checkpoints |
+| `presence` | `samples.json`, `dataset.json` | `presence.json` | GPU-free scan/night binary detection, ROC/AUC, night-level Mann–Whitney, and validation-selected area cutoffs |
 | `images` | checkpoints + test/val scenes | legacy `data/samples/*.png` | Migration intermediate; not delivered by the website |
 | `packs` | legacy probability/GT PNGs + raw PPI volumes | `data/samples/*.sbw.gz`, `*.webp`, `samples.json` metadata | GPU-free, deterministic migration for all 615 scenes |
 
@@ -74,6 +75,33 @@ it records the confusion counts, region metrics, boundary metrics, connected
 components and mean radial distance of each error type; it also accumulates
 global threshold sweeps, probability histograms, reliability bins and 12-ring
 radial error profiles.
+
+### Scan- and night-level presence analysis
+
+`presence` uses the full-resolution per-model `pred_area` already exported by
+`predict`; it never counts the downsampled packed-preview pixels. A scan is
+ground-truth present when `gt_area >= 1`. Each model's predicted-area score is
+computed at that model's locked pixel-probability threshold, then a second area
+cutoff is selected on validation by maximum Youden J (ties prefer higher
+specificity, then the higher cutoff) and applied unchanged to test. The export
+also retains the literal any-cell (`pred_area >= 1`) result.
+
+Operational nights run UTC noon-to-noon. Night truth is derived from all
+manifest scans assigned to that night, while max and mean predicted-area scores
+use the evaluated scans in each split. Per-night rows expose evaluated and full
+manifest scan counts, coverage fraction, and training-night exposure. Maximum
+scores are especially sensitive to unequal evaluated scan counts per night. The
+current scan-stratified split shares many nights across train/validation/test,
+so the artifact labels these night results as exploratory rather than an
+independent night-generalization estimate. Negative masks are synthesized as
+all-zero arrays by dataset construction, not independently annotated pixel masks.
+
+Generate and test this artifact without a checkpoint or GPU:
+
+```bat
+.venv\Scripts\python.exe scripts\export_dashboard_data.py --only presence --site-dir ..\sprucebudworm_progress.github.io
+.venv\Scripts\python.exe scripts\test_presence.py
+```
 
 ### Packed Sample Explorer assets
 
@@ -150,6 +178,9 @@ node ..\sprucebudworm_progress.github.io\assets\js\lib\metrics.test.js
 - split counts against `split_summary.json`, label-threshold nesting
   (`dbz5 ≤ dbz0 ≤ isfinite`), threshold-sweep monotonicity, and declared pack/
   thumbnail completeness;
+- presence cohort/overlap counts, locked validation cutoffs on test, ROC
+  monotonicity, confusion arithmetic, night-level Mann–Whitney output, percentile summaries,
+  and per-night evaluated/manifest coverage;
 - that the site's selection wording still matches the data — it asserts the
   selected run does **not** lead every metric, and tells you to update
   `experiments.js` if that ever changes.
