@@ -3,12 +3,23 @@
 Adapted from the reference notebook — its strongest deep model and the one the
 new architectures must beat. Attention gates re-weight skip connections to focus
 on sparse targets and suppress clutter. Single-channel logit output.
+
+Two optional heads extend it without altering the segmentation path:
+
+``cls_head``  an auxiliary presence classifier tapped off the bottleneck
+              (multi-task hard parameter sharing). ``forward`` then returns
+              ``(seg_logits, cls_logits)``.
+``temporal``  U-TAE-style temporal attention over a short sequence of scans. The
+              encoder runs on every frame with shared weights, L-TAE aggregates
+              at the bottleneck, and its attention masks collapse the skips. The
+              decoder and attention gates below are unchanged.
 """
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 
+from .temporal import LTAE2d, TemporalAggregator
 from .unet import ConvBlock
 
 
@@ -26,9 +37,13 @@ class AttentionGate(nn.Module):
 
 
 class AttentionUNet(nn.Module):
-    def __init__(self, in_channels: int = 6, base_filters: int = 32):
+    def __init__(self, in_channels: int = 6, base_filters: int = 32,
+                 cls_head: bool = False, temporal: bool = False,
+                 temporal_heads: int = 8, temporal_dk: int = 8):
         super().__init__()
         f = base_filters
+        self.cls_head_enabled = cls_head
+        self.temporal = temporal
         self.enc1 = ConvBlock(in_channels, f)
         self.enc2 = ConvBlock(f, f * 2)
         self.enc3 = ConvBlock(f * 2, f * 4)
@@ -50,12 +65,45 @@ class AttentionUNet(nn.Module):
         self.dec1 = ConvBlock(f * 2, f)
         self.out = nn.Conv2d(f, 1, 1)
 
-    def forward(self, x):
+        # Auxiliary presence classifier on the shared bottleneck. AdaptiveAvgPool
+        # keeps it resolution-agnostic, so the same weights work on 256x256
+        # training patches and on 960x960 full scenes.
+        if cls_head:
+            self.cls_pool = nn.AdaptiveAvgPool2d(1)
+            self.cls_fc = nn.Linear(f * 16, 1)
+
+        if temporal:
+            self.ltae = LTAE2d(f * 16, n_head=temporal_heads, d_k=temporal_dk)
+            self.temporal_agg = TemporalAggregator(n_head=temporal_heads)
+
+    def _encode(self, x):
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
         e4 = self.enc4(self.pool(e3))
         b = self.bottleneck(self.pool(e4))
+        return e1, e2, e3, e4, b
+
+    def forward(self, x, pad_mask=None):
+        if self.temporal:
+            if x.dim() != 5:
+                raise ValueError(f"temporal model expects (B,T,C,H,W), got {tuple(x.shape)}")
+            bs, t = x.shape[:2]
+            # Shared spatial encoder over every frame: fold time into the batch.
+            e1, e2, e3, e4, b = self._encode(x.reshape(bs * t, *x.shape[2:]))
+            b = b.view(bs, t, *b.shape[1:])
+            b, attention = self.ltae(b, pad_mask)
+            # Reuse the bottleneck's temporal weighting on each skip.
+            e1, e2, e3, e4 = (
+                self.temporal_agg(e.view(bs, t, *e.shape[1:]), attention)
+                for e in (e1, e2, e3, e4)
+            )
+        else:
+            if x.dim() != 4:
+                raise ValueError(f"non-temporal model expects (B,C,H,W), got {tuple(x.shape)}")
+            e1, e2, e3, e4, b = self._encode(x)
+
+        cls_logits = self.cls_fc(self.cls_pool(b).flatten(1)) if self.cls_head_enabled else None
 
         g4 = self.up4(b)
         d4 = self.dec4(torch.cat([g4, self.att4(g4, e4)], dim=1))
@@ -65,4 +113,5 @@ class AttentionUNet(nn.Module):
         d2 = self.dec2(torch.cat([g2, self.att2(g2, e2)], dim=1))
         g1 = self.up1(d2)
         d1 = self.dec1(torch.cat([g1, self.att1(g1, e1)], dim=1))
-        return self.out(d1)
+        seg_logits = self.out(d1)
+        return (seg_logits, cls_logits) if self.cls_head_enabled else seg_logits

@@ -1,0 +1,43 @@
+{
+  "name": "probe_lambda_030",
+  "model": "attention_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "valid_mask"
+  ],
+  "n_channels": 10,
+  "n_params": 7857246,
+  "best_val_dice_patch": 0.6555608990073358,
+  "best_epoch": 13,
+  "calibrated_threshold": 0.15,
+  "defer_test": true,
+  "val_full_scene": {
+    "dice": 0.5554473419371475,
+    "iou": 0.4223099177872972,
+    "precision": 0.5404556016707814,
+    "recall": 0.6685916541256491,
+    "f1": 0.5554473376669392,
+    "accuracy": 0.9755651846718083,
+    "boundary_iou": 0.3537170214773709,
+    "nsd": 0.2865570949856761,
+    "hd95": 100.18607352163878,
+    "assd": 31.81841485931638,
+    "dice_micro": 0.6790026661764365,
+    "iou_micro": 0.5140075977376093,
+    "precision_micro": 0.6049443003004583,
+    "recall_micro": 0.7737232542006276,
+    "n_pos_scenes": 310,
+    "n_neg_scenes": 93,
+    "bg_fp_rate": 0.0093932945041816,
+    "threshold": 0.15
+  }
+}

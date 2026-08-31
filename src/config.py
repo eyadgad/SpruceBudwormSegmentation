@@ -17,6 +17,8 @@ import yaml
 # Channel specs the framework knows how to build (see channels.py). ``th_e{i}``
 # and ``height_e{i}`` accept any elevation index 0..23; ``bh_e{i}`` any 0..25.
 _STATIC_CHANNELS = {"dem", "valid_mask"}
+# statistical-summary channels over TH elevations 0..5 (see channels.STAT_FUNCS)
+_STAT_CHANNELS = {"th_max", "th_med", "th_mean"}
 _KNOWN_MODELS = {"unet", "attention_unet", "nnunet", "smp_unetpp", "smp_deeplabv3p", "smp_segformer"}
 _KNOWN_LOSSES = {"dice", "dice_bce", "focal", "tversky", "focal_tversky", "bce", "dice_boundary"}
 
@@ -58,7 +60,7 @@ def load_experiments(path: str | Path) -> List[Dict[str, Any]]:
 
 
 def _validate_channel(spec: str) -> None:
-    if spec in _STATIC_CHANNELS:
+    if spec in _STATIC_CHANNELS or spec in _STAT_CHANNELS:
         return
     for prefix in ("th_e", "height_e", "bh_e"):
         if spec.startswith(prefix):

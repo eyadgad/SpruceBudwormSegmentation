@@ -59,6 +59,18 @@ def artifacts_dir(cfg: Dict) -> Path:
 
 
 def targets_dir(cfg: Dict) -> Path:
+    """Cached ground-truth masks.
+
+    Defaults to ``<artifacts_dir>/targets`` but may be pointed elsewhere with
+    ``data.targets_dir``. The cache holds raw dBZ slices keyed by timestamp and
+    is entirely split-independent -- which is why ``run.clean_run`` deliberately
+    preserves it -- so a second artifacts directory built for a different split
+    should share it rather than re-extract every mask.
+    """
+    override = cfg["data"].get("targets_dir")
+    if override:
+        d = Path(override)
+        return d if d.is_absolute() else project_root() / d
     return artifacts_dir(cfg) / "targets"
 
 

@@ -1,0 +1,35 @@
+{
+  "name": "stat_maxmedmean_std",
+  "model": "attention_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_max",
+    "th_med",
+    "th_mean"
+  ],
+  "n_channels": 3,
+  "n_params": 7854717,
+  "best_val_dice_patch": 0.6873880923945543,
+  "best_epoch": 50,
+  "calibrated_threshold": 0.15,
+  "test_full_scene": {
+    "dice": 0.5962081989518794,
+    "iou": 0.4593507096749703,
+    "precision": 0.5600516573669545,
+    "recall": 0.7026926589362406,
+    "f1": 0.5962081944655495,
+    "accuracy": 0.9733617876838129,
+    "boundary_iou": 0.37131579654350066,
+    "nsd": 0.3236240230912892,
+    "hd95": 85.47375842184655,
+    "assd": 23.160560948792437,
+    "dice_micro": 0.6968323247749698,
+    "iou_micro": 0.5347219226064991,
+    "precision_micro": 0.613277010543069,
+    "recall_micro": 0.8067467275056367,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 34,
+    "bg_fp_rate": 0.006058549070669935,
+    "threshold": 0.15
+  }
+}

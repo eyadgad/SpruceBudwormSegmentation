@@ -60,7 +60,11 @@ def _load_finished_results(base_cfg: Dict, experiments) -> List[Dict]:
 def build_table(results: List[Dict], base_cfg: Dict) -> pd.DataFrame:
     rows = []
     for r in results:
-        ts = r["test_full_scene"]
+        # With eval.defer_test the run reports val only; the test set is scored
+        # later by src.finalize. Rank on whatever split the run actually has, and
+        # say which one in the `source` column so the two are never conflated.
+        deferred = "test_full_scene" not in r
+        ts = r.get("test_full_scene") or r["val_full_scene"]
         micro = ts.get("dice_micro")  # present only for runs evaluated with the updated engine
         rows.append({
             "experiment": r["name"], "model": r["model"], "loss": r["loss"],
@@ -73,7 +77,7 @@ def build_table(results: List[Dict], base_cfg: Dict) -> pd.DataFrame:
             "boundary_iou": (round(ts["boundary_iou"], 4) if "boundary_iou" in ts else None),
             "nsd": (round(ts["nsd"], 4) if "nsd" in ts else None),
             "bg_fp_rate": (round(ts["bg_fp_rate"], 5) if ts["bg_fp_rate"] == ts["bg_fp_rate"] else None),
-            "source": "this_framework",
+            "source": "this_framework (val; test deferred)" if deferred else "this_framework",
         })
     for b in REFERENCE_BASELINES:
         rows.append({

@@ -120,11 +120,55 @@ class RegionBoundaryLoss(nn.Module):
         return self.region(logits, target) + self.w * self.boundary(logits, target)
 
 
+class MultiTaskLoss(nn.Module):
+    """``L_total = L_seg + lambda * L_cls`` over a shared encoder.
+
+    ``L_cls`` is BCE on an auxiliary presence logit whose target is the PATCH's
+    own label (does this crop contain any ground-truth pixel), not the parent
+    scan's. Multiple-instance-learning terms: the patch is the instance and its
+    label is exact, so this avoids the noisy bag-label propagation that would
+    result from stamping the scan label onto every crop.
+
+    ``lambda_cls = 0`` reproduces the pure segmentation loss exactly, which is
+    what makes the multi-task stage a controlled comparison.
+    """
+
+    is_multitask = True
+
+    def __init__(self, seg_loss: nn.Module, lambda_cls: float = 0.3,
+                 pos_weight: float | None = None):
+        super().__init__()
+        self.seg = seg_loss
+        self.lambda_cls = float(lambda_cls)
+        pw = None if pos_weight is None else torch.tensor([float(pos_weight)])
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pw)
+
+    def forward(self, out, target, cls_target=None):
+        seg_logits, cls_logits = out if isinstance(out, tuple) else (out, None)
+        loss = self.seg(seg_logits, target)
+        if self.lambda_cls and cls_logits is not None and cls_target is not None:
+            loss = loss + self.lambda_cls * self.bce(cls_logits, cls_target)
+        return loss
+
+
 def create_loss(cfg: Dict) -> nn.Module:
     """Build the loss from ``cfg['loss']``. Params use generic keys so a single
     naming scheme works across losses: ``alpha``, ``beta``, ``gamma``,
     ``pos_weight``, ``dice_weight``, ``bce_weight`` (also accepts the older
-    ``tversky_alpha``/``tversky_beta`` aliases)."""
+    ``tversky_alpha``/``tversky_beta`` aliases).
+
+    When ``model.cls_head`` is set the segmentation loss is wrapped in
+    ``MultiTaskLoss`` with weight ``loss.lambda_cls``.
+    """
+    seg = _create_seg_loss(cfg)
+    if bool(cfg.get("model", {}).get("cls_head", False)):
+        return MultiTaskLoss(seg,
+                             lambda_cls=float(cfg["loss"].get("lambda_cls", 0.3)),
+                             pos_weight=cfg["loss"].get("cls_pos_weight"))
+    return seg
+
+
+def _create_seg_loss(cfg: Dict) -> nn.Module:
     c = cfg["loss"]
     name = c["name"]
 

@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import netCDF4 as nc
 
-from . import channels, paths
+from . import channels, nights, paths
 
 # ----------------------------------------------------------------------------
 # Year-balanced split
@@ -109,6 +109,9 @@ def build_manifest(cfg: Dict) -> pd.DataFrame:
     split.mode:
       'stratified' (default) -> per-year 70/20/10; each year in every split.
       'year'                 -> whole years held out (build_year_split).
+      'night'                -> whole operational nights held out (see nights.py).
+                                Leakage-free: consecutive 30-minute scans of one
+                                moth exodus can no longer straddle splits.
     """
     csv = pd.read_csv(paths.matched_csv(cfg))
     split_cfg = cfg["split"]
@@ -143,6 +146,13 @@ def build_manifest(cfg: Dict) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
 
+    # The manifest's own ``night`` is the mask-file variable name and exists only
+    # for positives; keep it as ``mask_night`` (cache_targets indexes the netCDF
+    # by it) and make ``night`` the timestamp-derived operational night, which is
+    # defined for negatives too.
+    df["mask_night"] = df["night"].fillna("").astype(str)
+    df["night"] = df["timestamp"].map(nights.night_id)
+
     # Assign splits.
     if mode == "stratified":
         df["split"] = stratified_split_labels(df["year"].values, fractions, seed)
@@ -151,8 +161,11 @@ def build_manifest(cfg: Dict) -> pd.DataFrame:
         assignment = build_year_split({int(k): int(v) for k, v in counts.items()},
                                       fractions, split_cfg.get("years"), seed)
         df["split"] = df["year"].map(assignment)
+    elif mode == "night":
+        df["split"] = nights.assign_night_split(df, fractions, seed)
+        nights.verify_no_leakage(df)
     else:
-        raise ValueError(f"split.mode must be 'stratified' or 'year', got {mode}")
+        raise ValueError(f"split.mode must be 'stratified', 'year' or 'night', got {mode}")
 
     df = df.sort_values(["split", "timestamp"]).reset_index(drop=True)
     # Fail loudly if any radar file is missing (real data-loading boundary).
@@ -197,6 +210,9 @@ def cache_targets(cfg: Dict, df: pd.DataFrame, overwrite: bool = False) -> int:
     Slice lookup = (night variable, scan index whose timestamp == sample ts).
     Stored raw (NaN = background) so any target mode (isfinite / dbz>=t) can be
     derived later without re-extraction.
+
+    Uses ``mask_night`` (the netCDF variable name), NOT ``night`` -- the latter is
+    the timestamp-derived operational-night ID used for splitting.
     """
     tdir = paths.targets_dir(cfg)
     tdir.mkdir(parents=True, exist_ok=True)
@@ -209,7 +225,7 @@ def cache_targets(cfg: Dict, df: pd.DataFrame, overwrite: bool = False) -> int:
                 out_path = Path(r["target_path"])
                 if out_path.exists() and not overwrite:
                     continue
-                night = r["night"]
+                night = r["mask_night"] if "mask_night" in r else r["night"]
                 if night not in mask.variables:
                     raise KeyError(f"night '{night}' not a variable in {year} mask")
                 if night not in scan_ts_by_night:
@@ -255,8 +271,9 @@ def compute_norm_stats(cfg: Dict, df: pd.DataFrame) -> Dict[str, Dict[str, float
         if spec == "dem" or kind == "bh":
             vals = channels.raw_channel_values(cfg, None, spec)
             stats[spec] = {"mean": float(np.mean(vals)), "std": float(np.std(vals) + 1e-8)}
-    # Radar channels: stream over scenes with running sums.
-    radar_specs = [s for s in channel_list if channels.parse_spec(s)[0] in ("th", "height")]
+    # Radar channels (incl. per-pixel statistical summaries): stream over scenes
+    # with running sums.
+    radar_specs = [s for s in channel_list if channels.parse_spec(s)[0] in ("th", "height", "stat")]
     if radar_specs:
         acc = {s: {"n": 0, "s": 0.0, "ss": 0.0} for s in radar_specs}
         for _, r in train.iterrows():
@@ -302,6 +319,9 @@ def prepare(cfg: Dict, overwrite_targets: bool = False) -> Dict:
         },
         "positives_per_year_per_split": per_year,
     }
+    # Night accounting is reported for every mode, so the leakage of a
+    # scan-level split is visible in the artifact rather than only in a doc.
+    summary["night_split"] = nights.night_split_report(df)
     with open(adir / "split_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
@@ -320,6 +340,12 @@ def load_artifacts(cfg: Dict):
     manifest = pd.read_csv(adir / "manifest.csv")
     manifest["night"] = manifest["night"].fillna("").astype(str)
     manifest["target_path"] = manifest["target_path"].fillna("").astype(str)
+    if "mask_night" in manifest.columns:
+        manifest["mask_night"] = manifest["mask_night"].fillna("").astype(str)
+    else:
+        # Manifests written before the night split carry only the mask variable
+        # name in ``night``; keep them loadable.
+        manifest["mask_night"] = manifest["night"]
     with open(adir / "norm_stats.json", "r", encoding="utf-8") as f:
         norm_stats = json.load(f)
     return manifest, norm_stats

@@ -27,10 +27,29 @@ def create_model(cfg: Dict) -> nn.Module:
     in_channels = len(cfg["channels"])
     base_filters = int(m.get("base_filters", 32))
 
+    # Temporal settings live in one top-level block (see dataset.temporal_cfg),
+    # so the dataset and the model can never disagree about the input layout.
+    tc = cfg.get("temporal") or {}
+    temporal_enabled = bool(tc.get("enabled", False))
+    stacked = temporal_enabled and str(tc.get("mode", "attention")) == "stack"
+    if stacked:
+        # The 2.5D control concatenates neighbour frames onto the channel axis,
+        # so the first conv is wider. Attention fusion keeps the time axis
+        # separate and leaves the channel count alone.
+        in_channels *= 2 * int(tc.get("radius", 1)) + 1
+
     if name == "unet":
         return SimpleUNet(in_channels=in_channels, base_filters=base_filters)
     if name == "attention_unet":
-        return AttentionUNet(in_channels=in_channels, base_filters=base_filters)
+        return AttentionUNet(
+            in_channels=in_channels, base_filters=base_filters,
+            cls_head=bool(m.get("cls_head", False)),
+            # Only attention fusion changes the network; the stack control is an
+            # ordinary 2D model that happens to have more input channels.
+            temporal=temporal_enabled and not stacked,
+            temporal_heads=int(tc.get("n_head", 8)),
+            temporal_dk=int(tc.get("d_k", 8)),
+        )
     if name == "nnunet":
         return NNUNet(in_channels=in_channels, base_filters=base_filters,
                       num_stages=int(m.get("num_stages", 5)))
@@ -42,3 +61,14 @@ def create_model(cfg: Dict) -> nn.Module:
 
 def count_params(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+def seg_logits(out):
+    """Segmentation logits from a model output.
+
+    Models with an auxiliary classification head return ``(seg, cls)``; every
+    other architecture returns a bare tensor. Inference paths only ever want the
+    segmentation map, so they funnel through here rather than each learning the
+    multi-task calling convention.
+    """
+    return out[0] if isinstance(out, tuple) else out

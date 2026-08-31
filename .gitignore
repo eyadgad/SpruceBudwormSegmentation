@@ -13,6 +13,10 @@ artifacts/targets/
 
 # --- Model checkpoints: excluded by default; the best models are force-added ---
 outputs/checkpoints/
+outputs/night_split/checkpoints/
+
+# --- Per-scene statistic cache (3.6 GB of .npy, rebuilt on demand) ---
+artifacts/stat_cache/
 
 # --- Run logs and internal scratch files ---
 outputs/*.log
@@ -30,9 +34,11 @@ progress.md
 
 # --- Verbose per-run training logs (metrics are in history.csv / result.json) ---
 outputs/experiments/*.log
+outputs/night_split/experiments/*.log
 
 # --- Manifest with absolute local paths; references non-shipped data ---
 artifacts/manifest.csv
+artifacts_night/manifest.csv
 
 # --- Website-only tooling (separate repo); leaks local paths ---
 setup_git.py

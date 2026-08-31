@@ -1,0 +1,125 @@
+{
+  "mode": "night",
+  "fractions": {
+    "train": 0.7,
+    "val": 0.2,
+    "test": 0.1
+  },
+  "counts": {
+    "train": {
+      "positives": 1108,
+      "negatives": 331
+    },
+    "val": {
+      "positives": 310,
+      "negatives": 93
+    },
+    "test": {
+      "positives": 161,
+      "negatives": 49
+    }
+  },
+  "positives_per_year_per_split": {
+    "2013": {
+      "train": 91,
+      "val": 25,
+      "test": 14
+    },
+    "2014": {
+      "train": 67,
+      "val": 17,
+      "test": 7
+    },
+    "2015": {
+      "train": 119,
+      "val": 33,
+      "test": 17
+    },
+    "2016": {
+      "train": 191,
+      "val": 53,
+      "test": 32
+    },
+    "2017": {
+      "train": 300,
+      "val": 84,
+      "test": 42
+    },
+    "2018": {
+      "train": 103,
+      "val": 29,
+      "test": 16
+    },
+    "2019": {
+      "train": 237,
+      "val": 69,
+      "test": 33
+    }
+  },
+  "night_split": {
+    "unit": "operational_night",
+    "night_boundary": "UTC noon-to-noon",
+    "total_nights": 248,
+    "total_scans": 2052,
+    "migration_nights": 117,
+    "quiet_nights": 131,
+    "overlap_nights": 0,
+    "overlap_night_ids": [],
+    "per_split": {
+      "train": {
+        "nights": 148,
+        "migration_nights": 69,
+        "quiet_nights": 79,
+        "scans": 1439,
+        "positives": 1108,
+        "negatives": 331,
+        "scan_fraction": 0.7013,
+        "nights_per_year": {
+          "2013": 18,
+          "2014": 16,
+          "2015": 21,
+          "2016": 21,
+          "2017": 29,
+          "2018": 19,
+          "2019": 24
+        }
+      },
+      "val": {
+        "nights": 58,
+        "migration_nights": 27,
+        "quiet_nights": 31,
+        "scans": 403,
+        "positives": 310,
+        "negatives": 93,
+        "scan_fraction": 0.1964,
+        "nights_per_year": {
+          "2013": 8,
+          "2014": 6,
+          "2015": 8,
+          "2016": 9,
+          "2017": 10,
+          "2018": 7,
+          "2019": 10
+        }
+      },
+      "test": {
+        "nights": 42,
+        "migration_nights": 21,
+        "quiet_nights": 21,
+        "scans": 210,
+        "positives": 161,
+        "negatives": 49,
+        "scan_fraction": 0.1023,
+        "nights_per_year": {
+          "2013": 6,
+          "2014": 4,
+          "2015": 6,
+          "2016": 7,
+          "2017": 6,
+          "2018": 6,
+          "2019": 7
+        }
+      }
+    }
+  }
+}

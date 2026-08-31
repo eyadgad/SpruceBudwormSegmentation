@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from . import channels, dataset
 from . import metrics as metrics_mod
 from .metrics import compute_metrics
+from .models import seg_logits
 
 IMG_SIZE = channels.IMG_SIZE
 
@@ -62,6 +63,24 @@ def _reset_nonfinite_bn(model: torch.nn.Module) -> None:
                 m.reset_running_stats()
 
 
+def unpack_batch(batch):
+    """Split a loader batch into ``(x, y, extra)``.
+
+    Plain runs yield ``(x, y)``. The multi-task and temporal variants add a third
+    dict element carrying ``cls`` (patch presence label) and/or ``pad_mask``
+    (which temporal slots are replicated padding), so every consumer can stay
+    agnostic about which extras a given experiment enabled.
+    """
+    if len(batch) == 2:
+        return batch[0], batch[1], {}
+    return batch[0], batch[1], batch[2]
+
+
+def forward(model, x, pad_mask=None):
+    """Call a model, passing ``pad_mask`` only to the temporal architectures."""
+    return model(x, pad_mask) if pad_mask is not None else model(x)
+
+
 def train_one_epoch(model, loader, optimizer, criterion, device, scaler, accum_steps=1,
                     verbose=False, use_amp=False, amp_dtype=torch.float16, logger=None):
     """One training epoch. AMP dtype is configurable: bfloat16 (recommended,
@@ -76,13 +95,22 @@ def train_one_epoch(model, loader, optimizer, criterion, device, scaler, accum_s
     n_skipped = 0        # micro-batches dropped for a non-finite loss
     n_bad_grad = 0       # optimizer steps skipped for non-finite gradients
     params = [p for g in optimizer.param_groups for p in g["params"]]
+    multitask = bool(getattr(criterion, "is_multitask", False))
     optimizer.zero_grad(set_to_none=True)
-    for i, (x, y) in enumerate(loader):
+    for i, batch in enumerate(loader):
+        x, y, extra = unpack_batch(batch)
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
+        pad_mask = extra.get("pad_mask")
+        if pad_mask is not None:
+            pad_mask = pad_mask.to(device, non_blocking=True)
+        cls_target = extra.get("cls")
+        if cls_target is not None:
+            cls_target = cls_target.to(device, non_blocking=True)
         with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-            logits = model(x)
-            loss = criterion(logits, y) / accum_steps
+            out = forward(model, x, pad_mask)
+            loss = (criterion(out, y, cls_target) if multitask
+                    else criterion(seg_logits(out), y)) / accum_steps
         # Guard: a non-finite loss (fp16 overflow, bad batch) must never reach the
         # optimizer or accumulate — drop this micro-batch instead.
         # ALSO reset any BN running buffers the forward may have corrupted: BN
@@ -132,9 +160,13 @@ def validate_patches(model, loader, device, threshold=0.5) -> Dict[str, float]:
     """Cheap patch-grid validation: accumulate confusion counts at a threshold."""
     model.eval()
     tp = fp = fn = tn = 0.0
-    for x, y in loader:
+    for batch in loader:
+        x, y, extra = unpack_batch(batch)
         x = x.to(device, non_blocking=True)
-        prob = torch.sigmoid(model(x)).cpu().numpy()
+        pad_mask = extra.get("pad_mask")
+        if pad_mask is not None:
+            pad_mask = pad_mask.to(device, non_blocking=True)
+        prob = torch.sigmoid(seg_logits(forward(model, x, pad_mask))).cpu().numpy()
         pred = (prob > threshold).astype(np.float64)
         t = y.numpy().astype(np.float64)
         tp += float((pred * t).sum())
@@ -200,19 +232,33 @@ def _gaussian_weight(patch_size: int, sigma_scale: float = 0.125) -> np.ndarray:
 
 @torch.no_grad()
 def sliding_window_predict(model, x_full, device, patch_size=256, overlap=0.5,
-                           use_tta=False, gaussian=True) -> np.ndarray:
-    """Probability map (H,W) for a full (C,H,W) scene via overlapped windows.
+                           use_tta=False, gaussian=True, pad_mask=None,
+                           return_cls=False):
+    """Probability map (H,W) for a full scene via overlapped windows.
+
+    ``x_full`` is ``(C,H,W)``, or ``(T,C,H,W)`` for the temporal models -- in
+    which case ``pad_mask`` is a length-T boolean array marking replicated
+    padding frames. The same window geometry is used either way; only the
+    channel/time axes differ.
 
     ``gaussian=True`` weights each patch's contribution by a centred Gaussian
     (nnU-Net): centre pixels count most, borders least, suppressing tiling seams.
+
+    ``return_cls=True`` additionally returns the MAX auxiliary presence
+    probability over all windows -- the standard max-pooling MIL aggregation from
+    instance (patch) scores to a bag (scan) score.
     """
     model.eval()
-    C, H, W = x_full.shape
+    temporal = x_full.ndim == 4
+    H, W = x_full.shape[-2:]
     stride = max(1, int(patch_size * (1 - overlap)))
     prob = np.zeros((H, W), dtype=np.float64)
     weight = np.zeros((H, W), dtype=np.float64)
     wmap = _gaussian_weight(patch_size) if gaussian else np.ones((patch_size, patch_size))
     xt = torch.from_numpy(np.ascontiguousarray(x_full)).float().unsqueeze(0).to(device)
+    mask_t = None
+    if temporal and pad_mask is not None:
+        mask_t = torch.from_numpy(np.asarray(pad_mask, dtype=bool)).unsqueeze(0).to(device)
 
     rows = list(range(0, H - patch_size + 1, stride))
     cols = list(range(0, W - patch_size + 1, stride))
@@ -222,19 +268,48 @@ def sliding_window_predict(model, x_full, device, patch_size=256, overlap=0.5,
         cols.append(W - patch_size)
 
     transforms = _TTA if use_tta else ["none"]
+    cls_max = None
     for r in rows:
         for c in cols:
-            patch = xt[:, :, r:r + patch_size, c:c + patch_size]
+            patch = xt[..., r:r + patch_size, c:c + patch_size]
             acc = torch.zeros((1, 1, patch_size, patch_size), device=device)
             for t in transforms:
+                # TTA flips/rotations act on the trailing spatial dims, so they
+                # apply unchanged to the (B,T,C,H,W) temporal layout.
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16,
                                     enabled=(device.type == "cuda")):
-                    out = model(_apply_tta(patch, t))
-                acc += torch.sigmoid(_undo_tta(out, t).float())
+                    out = forward(model, _apply_tta(patch, t), mask_t)
+                if isinstance(out, tuple) and out[1] is not None:
+                    p = torch.sigmoid(out[1].float()).max().item()
+                    cls_max = p if cls_max is None else max(cls_max, p)
+                acc += torch.sigmoid(_undo_tta(seg_logits(out), t).float())
             acc /= len(transforms)
             prob[r:r + patch_size, c:c + patch_size] += acc[0, 0].cpu().numpy() * wmap
             weight[r:r + patch_size, c:c + patch_size] += wmap
-    return prob / np.maximum(weight, 1e-8)
+    result = prob / np.maximum(weight, 1e-8)
+    return (result, cls_max) if return_cls else result
+
+
+def scene_loader(cfg, rows: List[dict], norm_stats):
+    """Return ``load(i) -> (x, y, pad_mask)`` for the configured input mode.
+
+    Hides whether an experiment feeds one scan or a short in-night sequence, so
+    threshold calibration and full-scene evaluation are identical either way.
+    Neighbours are resolved within ``rows``, i.e. within one split -- and since
+    whole nights live in one split, no sequence can cross a split boundary.
+    """
+    tc = dataset.temporal_cfg(cfg)
+    if not tc["enabled"]:
+        def load(i):
+            x, y = dataset.load_full_scene(cfg, rows[i], norm_stats)
+            return x, y, None
+        return load
+
+    seq_index = dataset.build_sequence_index(rows, tc["radius"], tc["max_gap_minutes"])
+
+    def load(i):
+        return dataset.load_full_scene_sequence(cfg, rows, i, norm_stats, seq_index)
+    return load
 
 
 def calibrate_threshold(model, rows: List[dict], cfg, norm_stats, device,
@@ -244,16 +319,18 @@ def calibrate_threshold(model, rows: List[dict], cfg, norm_stats, device,
     Dice is undefined on all-background (negative) scenes, so calibration uses
     only scenes that contain ground-truth positives.
     """
-    pos_rows = [r for r in rows if int(r["label"]) == 1]
-    if max_scenes is not None and len(pos_rows) > max_scenes:
-        pos_rows = pos_rows[:max_scenes]
+    # Neighbour lookup must span the whole split, so index first and subset after.
+    load = scene_loader(cfg, rows, norm_stats)
+    pos_idx = [i for i, r in enumerate(rows) if int(r["label"]) == 1]
+    if max_scenes is not None and len(pos_idx) > max_scenes:
+        pos_idx = pos_idx[:max_scenes]
     ps = int(cfg["patch"]["size"])
     ov = float(cfg["eval"].get("overlap", cfg["eval"].get("sliding_overlap", 0.5)))
     tta = bool(cfg["eval"].get("tta", True))
     probs, trues = [], []
-    for row in pos_rows:
-        x, y = dataset.load_full_scene(cfg, row, norm_stats)
-        probs.append(sliding_window_predict(model, x, device, ps, ov, tta))
+    for i in pos_idx:
+        x, y, pad = load(i)
+        probs.append(sliding_window_predict(model, x, device, ps, ov, tta, pad_mask=pad))
         trues.append(y)
     best_t, best_d = 0.5, -1.0
     for t in thresholds:
@@ -284,9 +361,11 @@ def evaluate_full_scene(model, rows: List[dict], cfg, norm_stats, device,
     boundary = bool(cfg["eval"].get("boundary_metrics", True))
     pos_metrics, bg_fp = [], []
     TP = FP = FN = TN = 0.0
-    for row in rows:
-        x, y = dataset.load_full_scene(cfg, row, norm_stats)
-        prob = sliding_window_predict(model, x, device, ps, ov, tta, gaussian=gaussian)
+    load = scene_loader(cfg, rows, norm_stats)
+    for i, row in enumerate(rows):
+        x, y, pad = load(i)
+        prob = sliding_window_predict(model, x, device, ps, ov, tta, gaussian=gaussian,
+                                      pad_mask=pad)
         pred = prob > threshold
         if int(row["label"]) == 1:
             m = compute_metrics(pred, y)
