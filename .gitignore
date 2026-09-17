@@ -1,0 +1,60 @@
+# --- Python environment / caches ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# --- Raw dataset (515 GB, not distributable here) ---
+Data/
+*.nc
+
+# --- Derived target / statistic caches ---
+artifacts/targets/
+artifacts/**/targets/
+*.npy
+
+# --- Model weights (never push) ---
+*.pt
+*.pth
+*.onnx
+*.ckpt
+outputs/**/checkpoints/
+
+# --- Inference caches / full-scene maps ---
+outputs/**/cache/
+*.npz
+
+# --- Training / eval logs (metrics live in history.csv / result.json) ---
+*.log
+outputs/**/*.err
+outputs/**/*.out
+
+# --- Per-scene statistic cache (3.6 GB of .npy, rebuilt on demand) ---
+artifacts/stat_cache/
+
+# --- Run logs and internal scratch files ---
+outputs/*.log
+outputs/_*.txt
+outputs/_old_site_index.html
+
+# --- Progress website (lives in its own repo) ---
+sprucebudworm_progress.github.io/
+
+# --- Legacy / large one-off files ---
+old-budworm-training.ipynb
+
+# --- Internal engineering log (dev notes) ---
+progress.md
+
+# --- Verbose per-run training logs (metrics are in history.csv / result.json) ---
+outputs/experiments/*.log
+outputs/night_split/experiments/*.log
+
+# --- Manifest with absolute local paths; references non-shipped data ---
+artifacts/manifest.csv
+artifacts_night/manifest.csv
+
+# --- Website-only tooling (separate repo); leaks local paths ---
+setup_git.py
+enable_pages.py

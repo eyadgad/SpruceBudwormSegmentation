@@ -1,0 +1,84 @@
+# Controlled ablation on the leakage-free night split.
+#
+# Every stage is the SELECTED model sweep_attunet_dbz0_e012345678_focaltv --
+# Attention U-Net, th_e0..th_e8 + valid_mask, dbZ>=0 target, Focal-Tversky
+# (0.3/0.7/1.333), AdamW 3e-4, TTA off -- and changes exactly one thing relative
+# to the stage above it. Optimizer, seed, patch geometry, threshold grid and
+# calibration procedure are held fixed throughout.
+#
+#   S0  night_base_attunet9    night split only              <- the new baseline
+#   S1  night_bal_attunet9     + night-balanced sampling
+#   S2  night_mtl_attunet9     + joint presence classification
+#   S3a night_tstack_attunet9  + temporal channel stacking    (2.5D control)
+#   S3b night_ltae_attunet9    + L-TAE temporal attention     (primary)
+#
+# Comparisons are against S0. No improvement is claimed that these runs do not
+# show. The historical dashboard model is NOT comparable: it was trained on the
+# scan-level split in which 172 of 248 nights straddled train/val/test.
+
+_common: &common
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: attention_unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  train:  {epochs: 100, patience: 50, seed: 42}
+  eval:   {tta: false}
+
+experiments:
+  # -- S0: unchanged model, leakage-free split. Everything is measured against this.
+  - name: night_base_attunet9
+    <<: *common
+
+  # -- S1: night-balanced sampling (TRAIN ONLY).
+  # Scans per night range 1..28 (migration mean 13.5, quiet 3.6), so by default a
+  # few long migration nights dominate the epoch. This draws nights instead of
+  # scenes, with migration/quiet balanced. Validation keeps its natural
+  # distribution so model selection is not reweighted.
+  - name: night_bal_attunet9
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+
+  # -- S2: joint segmentation + presence classification on a shared encoder.
+  # The classifier is a GAP+linear head on the bottleneck; its target is the
+  # PATCH's own label (yp.sum() > 0), never the parent scan's, so a plume-free
+  # crop of a positive scan is correctly labelled negative.
+  # lambda_cls = 0.1, selected on VALIDATION ONLY by the 25-epoch probes in
+  # configs/experiments_night_lambda.yaml: val patch Dice 0.6688 (0.1) vs
+  # 0.6565 (1.0) vs 0.6556 (0.3). The 0.0123 margin over second place is above
+  # the 0.005 band where the choice would be called weakly determined, but note
+  # the ordering is NOT monotonic in lambda, so read it as "0.1 is modestly
+  # best of three", not as a trend.
+  - name: night_mtl_attunet9
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+
+  # -- S3a: temporal CONTROL. Neighbour scans concatenated as extra input
+  # channels (10 -> 30). Vu et al. (Med. Phys. 2020) found multi-slice stacking
+  # significantly helped only 1 of 5 datasets, so this is here to test whether
+  # the attention module in S3b earns its complexity, not because it is expected
+  # to win. Missing neighbours are imputed with a copy of the centre scan -- the
+  # standard imputation, and the weakness the masked variant avoids.
+  - name: night_tstack_attunet9
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+    temporal: {enabled: true, radius: 1, max_gap_minutes: 35.0, mode: stack}
+
+  # -- S3b: temporal attention (U-TAE / L-TAE, Garnot & Landrieu ICCV 2021).
+  # Shared 2D encoder over the sequence, L-TAE at the bottleneck, attention masks
+  # collapsing the skips; the Attention U-Net decoder and gates are untouched.
+  # radius 1 and a 35-minute tolerance follow the measured 30-minute cadence.
+  # Only ~54% of scans have both neighbours and ~17% have none, so pad slots hold
+  # a centre-frame copy (keeping BatchNorm statistics real) and are masked out of
+  # the attention softmax -- an isolated scan degrades to the single-frame model.
+  - name: night_ltae_attunet9
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+    temporal: {enabled: true, radius: 1, max_gap_minutes: 35.0, mode: attention,
+               n_head: 8, d_k: 8}

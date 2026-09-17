@@ -1,0 +1,30 @@
+# Validation-only probe for the multi-task weight lambda in L = L_seg + lambda*L_cls.
+#
+# Short runs (25 epochs) whose ONLY purpose is to rank lambda on validation patch
+# Dice. eval.defer_test in the night base config keeps the test set untouched, so
+# nothing here can leak into the reported result. The winner is written into
+# night_mtl_attunet9 in configs/experiments_night.yaml before the full chain runs.
+#
+# These probes are not reported as results; they are hyperparameter selection.
+
+_probe: &probe
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: attention_unet, base_filters: 32, cls_head: true}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  # Same sampler as S2 so the probe measures lambda, not the sampler.
+  train:  {epochs: 25, patience: 50, seed: 42, night_balanced: true}
+  eval:   {tta: false}
+
+experiments:
+  - name: probe_lambda_010
+    <<: *probe
+    loss: {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+
+  - name: probe_lambda_030
+    <<: *probe
+    loss: {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.3}
+
+  - name: probe_lambda_100
+    <<: *probe
+    loss: {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 1.0}

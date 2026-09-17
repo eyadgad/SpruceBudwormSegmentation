@@ -1,0 +1,38 @@
+{
+  "name": "nnunet_dice_bce",
+  "model": "nnunet",
+  "loss": "dice_bce",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 5686465,
+  "best_val_dice_patch": 0.6763736456672362,
+  "best_epoch": 22,
+  "calibrated_threshold": 0.55,
+  "test_full_scene": {
+    "dice": 0.6089001087110061,
+    "iou": 0.4657253559457036,
+    "precision": 0.5385952613087673,
+    "recall": 0.7775631986408897,
+    "f1": 0.6089001042944142,
+    "accuracy": 0.958942344515921,
+    "boundary_iou": 0.28208493851645283,
+    "nsd": 0.20328120332638394,
+    "hd95": 95.39911604298418,
+    "assd": 29.539136910309264,
+    "dice_micro": 0.6904890180025949,
+    "iou_micro": 0.5272876879194919,
+    "precision_micro": 0.5777139258354147,
+    "recall_micro": 0.8579733342325304,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.008197234623015873,
+    "threshold": 0.55
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "n_train_scored": 300,
+  "train_mean_dice": 0.6221927839944567,
+  "test_mean_dice": 0.6347005882352942,
+  "area_matched_gap": 0.009416907148789918,
+  "mannwhitney_p": 0.8895392810035432
+}

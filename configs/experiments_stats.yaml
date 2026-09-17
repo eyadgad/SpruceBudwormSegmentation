@@ -1,0 +1,56 @@
+# Statistical-summary input experiments.
+#
+# Instead of feeding the low elevations as separate channels, feed per-pixel
+# nan-aware summaries over TH elevations 0..5:
+#   th_max   maximum across elevations 0..5
+#   th_med   median  across elevations 0..5
+#   th_mean  mean    across elevations 0..5
+#
+# Two variants of each channel set:
+#   *_raw  raw summary values           (standardize_inputs: false)
+#   *_std  z-scored with the existing normalization (standardize_inputs: true)
+#
+# Everything else (architecture, loss, target, patch/eval/train hyperparameters,
+# the shared 70/20/10 stratified split) matches the elevation sweep so these are
+# directly comparable to the previous experiments. 100 epochs each.
+
+_common: &common
+  model:  {name: attention_unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  train:  {epochs: 100}
+  patch:  {patches_per_image: 8}
+  eval:   {tta: false}
+
+experiments:
+  # ---- raw-values ----
+  - name: stat_max_raw
+    <<: *common
+    standardize_inputs: false
+    channels: [th_max]
+
+  - name: stat_maxmed_raw
+    <<: *common
+    standardize_inputs: false
+    channels: [th_max, th_med]
+
+  - name: stat_maxmedmean_raw
+    <<: *common
+    standardize_inputs: false
+    channels: [th_max, th_med, th_mean]
+
+  # ---- standardized-values ----
+  - name: stat_max_std
+    <<: *common
+    standardize_inputs: true
+    channels: [th_max]
+
+  - name: stat_maxmed_std
+    <<: *common
+    standardize_inputs: true
+    channels: [th_max, th_med]
+
+  - name: stat_maxmedmean_std
+    <<: *common
+    standardize_inputs: true
+    channels: [th_max, th_med, th_mean]

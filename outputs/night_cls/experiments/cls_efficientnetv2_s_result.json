@@ -1,0 +1,27 @@
+{
+  "name": "cls_efficientnetv2_s",
+  "task": "classify",
+  "model": "efficientnetv2_s",
+  "n_params": 20180281,
+  "best_val_auc": 0.9250780437044749,
+  "best_epoch": 7,
+  "calibrated_threshold": 0.5,
+  "val": {
+    "auroc": 0.9250780437044749,
+    "accuracy": 0.9081885856079405,
+    "precision": 0.9475409836065574,
+    "recall": 0.932258064516129,
+    "f1": 0.9398373983739837,
+    "youden_j": 0.7602150537634409,
+    "n": 403,
+    "n_positive": 310,
+    "n_negative": 93,
+    "confusion": {
+      "tp": 289,
+      "fp": 16,
+      "tn": 77,
+      "fn": 21
+    },
+    "threshold": 0.5
+  }
+}

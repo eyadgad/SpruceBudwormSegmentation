@@ -1,0 +1,43 @@
+{
+  "name": "night_mtl_attunet9",
+  "model": "attention_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "valid_mask"
+  ],
+  "n_channels": 10,
+  "n_params": 7857246,
+  "best_val_dice_patch": 0.684639335060814,
+  "best_epoch": 55,
+  "calibrated_threshold": 0.15,
+  "defer_test": true,
+  "val_full_scene": {
+    "dice": 0.5880635318385773,
+    "iou": 0.4545053855985343,
+    "precision": 0.6104979651319374,
+    "recall": 0.6473196216024867,
+    "f1": 0.5880635274891081,
+    "accuracy": 0.979387632308457,
+    "boundary_iou": 0.3919641951469341,
+    "nsd": 0.3312573866006396,
+    "hd95": 97.31449349931627,
+    "assd": 30.103191927094166,
+    "dice_micro": 0.7120410973151751,
+    "iou_micro": 0.5528445789930753,
+    "precision_micro": 0.667483821390757,
+    "recall_micro": 0.7629726427333366,
+    "n_pos_scenes": 310,
+    "n_neg_scenes": 93,
+    "bg_fp_rate": 0.008333905036589007,
+    "threshold": 0.15
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "cls_convnext_tiny",
+  "task": "classify",
+  "model": "convnext_tiny",
+  "n_params": 27831649,
+  "best_val_auc": 0.9525494276795006,
+  "best_epoch": 18,
+  "calibrated_threshold": 0.85,
+  "val": {
+    "auroc": 0.9525494276795006,
+    "accuracy": 0.8858560794044665,
+    "precision": 0.9680851063829787,
+    "recall": 0.8806451612903226,
+    "f1": 0.9222972972972973,
+    "youden_j": 0.7838709677419353,
+    "n": 403,
+    "n_positive": 310,
+    "n_negative": 93,
+    "confusion": {
+      "tp": 273,
+      "fp": 9,
+      "tn": 84,
+      "fn": 37
+    },
+    "threshold": 0.85
+  }
+}

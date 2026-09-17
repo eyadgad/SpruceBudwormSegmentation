@@ -1,0 +1,38 @@
+{
+  "name": "unet_dice_bce",
+  "model": "unet",
+  "loss": "dice_bce",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 7766849,
+  "best_val_dice_patch": 0.6767302036498575,
+  "best_epoch": 26,
+  "calibrated_threshold": 0.55,
+  "test_full_scene": {
+    "dice": 0.607310313189686,
+    "iou": 0.46716266791459604,
+    "precision": 0.5509699966843097,
+    "recall": 0.7597944261439844,
+    "f1": 0.6073103087924615,
+    "accuracy": 0.9603653364991724,
+    "boundary_iou": 0.29752557912185545,
+    "nsd": 0.21461774510418657,
+    "hd95": 95.5586523693623,
+    "assd": 29.991143560264792,
+    "dice_micro": 0.691521468064918,
+    "iou_micro": 0.5284927885230499,
+    "precision_micro": 0.5915010020062216,
+    "recall_micro": 0.8322519639168054,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.00801460193452381,
+    "threshold": 0.55
+  }
+}

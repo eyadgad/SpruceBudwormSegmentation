@@ -1,0 +1,43 @@
+{
+  "name": "gated_swin_attn_night",
+  "model": "gated_swin_attn",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "valid_mask"
+  ],
+  "n_channels": 10,
+  "n_params": 34557429,
+  "best_val_dice_patch": 0.5994133650628988,
+  "best_epoch": 48,
+  "calibrated_threshold": 0.15,
+  "defer_test": true,
+  "val_full_scene": {
+    "dice": 0.5308645571209678,
+    "iou": 0.4080697844184249,
+    "precision": 0.4975781140115291,
+    "recall": 0.6656243180256659,
+    "f1": 0.5308645532663929,
+    "accuracy": 0.9782605146729287,
+    "boundary_iou": 0.34656044873806646,
+    "nsd": 0.3232634248975226,
+    "hd95": 96.30145265303891,
+    "assd": 28.37622852963472,
+    "dice_micro": 0.6716667713377232,
+    "iou_micro": 0.5056462917924127,
+    "precision_micro": 0.5936845390874215,
+    "recall_micro": 0.7732332632126788,
+    "n_pos_scenes": 310,
+    "n_neg_scenes": 302,
+    "bg_fp_rate": 0.0036606111168598233,
+    "threshold": 0.15
+  }
+}

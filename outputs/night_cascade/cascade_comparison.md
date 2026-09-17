@@ -1,0 +1,12 @@
+# Cascade comparison — night-split val (test deferred)
+
+Hard gate: if `p_cls < t` the scan is all zeros, otherwise the segmenter map is left unscaled. Soft multiply is not used.
+
+| name                                                 | family            |   dice |    iou |   precision |   recall |   bg_fp_rate |   scan_auroc |   scan_f1 |   scan_precision |   scan_recall |   seg_threshold |   cls_threshold |   n_pos |   n_neg | note                                  |
+|:-----------------------------------------------------|:------------------|-------:|-------:|------------:|---------:|-------------:|-------------:|----------:|-----------------:|--------------:|----------------:|----------------:|--------:|--------:|:--------------------------------------|
+| night_base_attunet9_ungated                          | segmentation      | 0.5602 | 0.4273 |      0.6009 |   0.6190 |       0.0072 |       0.5000 |    0.6725 |           0.5065 |        1.0000 |          0.1500 |          0.0000 |     310 |     302 | nan                                   |
+| cascade_cls_swin_tiny_bal+night_base_attunet9_youden | cascade           | 0.4884 | 0.3768 |      0.5258 |   0.5243 |       0.0021 |       0.9404 |    0.8538 |           0.8912 |        0.8194 |          0.1500 |          0.0500 |     310 |     302 | cls cutoff = Youden J                 |
+| cascade_cls_swin_tiny_bal+night_base_attunet9_dice   | cascade           | 0.4884 | 0.3768 |      0.5258 |   0.5243 |       0.0021 |       0.9404 |    0.8538 |           0.8912 |        0.8194 |          0.1500 |          0.0500 |     310 |     302 | cls cutoff max val Dice               |
+| cls_swin_tiny_bal                                    | classifier        | 0.4884 | 0.3768 |      0.5258 |   0.5243 |       0.0021 |       0.9404 |    0.8538 |           0.8912 |        0.8194 |          0.1500 |          0.0500 |     310 |     302 | scan metrics; pixel maps are gated S0 |
+| gated_attn_unet                                      | one_model_hard    | 0.0330 | 0.0243 |      0.0279 |   0.0460 |       0.0001 |       0.7591 |    0.1056 |           0.5806 |        0.0581 |          0.1500 |          0.2000 |     310 |     302 | hard gate, Kendall UW, S0 init        |
+| gated_attn_unet_ungated                              | one_model_ungated | 0.5665 | 0.4317 |      0.5865 |   0.6511 |       0.0071 |       0.7591 |    0.0831 |           0.5185 |        0.0452 |          0.1500 |          0.0000 |     310 |     302 | nan                                   |

@@ -1,0 +1,4 @@
+name,family,cls_threshold,dice,bg_fp_rate,scan_recall,scan_auroc,note
+night_base_attunet9_ungated,segmentation,0.0,0.5602222133419456,0.007196841657468727,1.0,,"S0 maps, no gate"
+cascade_cls_swin_tiny_bal_op,two_model_swin,0.0,0.5602222133419456,0.007196841657468727,1.0,0.9404080324716939,highest t with Dice within 0.01 of S0
+cascade_frozen_s0_cls_op,one_model_frozen_head,0.03,0.5589504121380622,0.007047328429681751,0.9967741935483871,0.8418980986968605,highest t with Dice within 0.01 of S0

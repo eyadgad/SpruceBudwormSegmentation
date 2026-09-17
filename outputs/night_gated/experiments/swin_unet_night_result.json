@@ -1,0 +1,43 @@
+{
+  "name": "swin_unet_night",
+  "model": "swin_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "valid_mask"
+  ],
+  "n_channels": 10,
+  "n_params": 34361532,
+  "best_val_dice_patch": 0.6148604214610518,
+  "best_epoch": 41,
+  "calibrated_threshold": 0.15,
+  "defer_test": true,
+  "val_full_scene": {
+    "dice": 0.5330300949483705,
+    "iou": 0.4099715590679067,
+    "precision": 0.5245306038148019,
+    "recall": 0.6340303065262078,
+    "f1": 0.5330300910725683,
+    "accuracy": 0.9800520413306346,
+    "boundary_iou": 0.3731878321349129,
+    "nsd": 0.37380029211491583,
+    "hd95": 94.5444228509299,
+    "assd": 27.174766586587765,
+    "dice_micro": 0.6821810778396626,
+    "iou_micro": 0.5176591915385038,
+    "precision_micro": 0.6295187310639369,
+    "recall_micro": 0.7444587217446681,
+    "n_pos_scenes": 310,
+    "n_neg_scenes": 302,
+    "bg_fp_rate": 0.0021729988732523916,
+    "threshold": 0.15
+  }
+}

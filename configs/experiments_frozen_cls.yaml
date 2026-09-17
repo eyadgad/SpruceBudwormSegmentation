@@ -1,0 +1,11 @@
+# Frozen-S0 scan head. Segmentation weights never update.
+
+experiments:
+  - name: frozen_s0_cls
+    model:
+      name: attention_unet
+      base_filters: 32
+      cls_head: true
+      img_size: 384
+      init_checkpoint: outputs/night_split/checkpoints/night_base_attunet9_best.pt
+      freeze_backbone: true

@@ -1,0 +1,6 @@
+# One scan-level classifier for the two-model cascade.
+# Swin-Tiny was the strongest of the four original classifiers (AUROC 0.959).
+
+experiments:
+  - name: cls_swin_tiny_bal
+    model: {name: swin_tiny, pretrained: true, img_size: 384}

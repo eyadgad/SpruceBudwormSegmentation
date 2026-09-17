@@ -1,0 +1,59 @@
+{
+  "mode": "stratified",
+  "fractions": {
+    "train": 0.7,
+    "val": 0.2,
+    "test": 0.1
+  },
+  "counts": {
+    "train": {
+      "positives": 1092,
+      "negatives": 345
+    },
+    "val": {
+      "positives": 317,
+      "negatives": 94
+    },
+    "test": {
+      "positives": 170,
+      "negatives": 34
+    }
+  },
+  "positives_per_year_per_split": {
+    "2013": {
+      "train": 92,
+      "val": 26,
+      "test": 12
+    },
+    "2014": {
+      "train": 62,
+      "val": 20,
+      "test": 9
+    },
+    "2015": {
+      "train": 118,
+      "val": 34,
+      "test": 17
+    },
+    "2016": {
+      "train": 185,
+      "val": 59,
+      "test": 32
+    },
+    "2017": {
+      "train": 298,
+      "val": 82,
+      "test": 46
+    },
+    "2018": {
+      "train": 101,
+      "val": 31,
+      "test": 16
+    },
+    "2019": {
+      "train": 236,
+      "val": 65,
+      "test": 38
+    }
+  }
+}

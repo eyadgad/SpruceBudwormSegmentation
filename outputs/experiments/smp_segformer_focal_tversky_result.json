@@ -1,0 +1,38 @@
+{
+  "name": "smp_segformer_focal_tversky",
+  "model": "smp_segformer",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 3719105,
+  "best_val_dice_patch": 0.6829425257494544,
+  "best_epoch": 18,
+  "calibrated_threshold": 0.5,
+  "test_full_scene": {
+    "dice": 0.5989353182900465,
+    "iou": 0.4599307537524486,
+    "precision": 0.5500668251702278,
+    "recall": 0.7392117943049905,
+    "f1": 0.5989353139115937,
+    "accuracy": 0.9603060789419832,
+    "boundary_iou": 0.2651624602552659,
+    "nsd": 0.17120178951312243,
+    "hd95": 101.76570870538039,
+    "assd": 31.226258207315613,
+    "dice_micro": 0.6910772674671826,
+    "iou_micro": 0.527974073862955,
+    "precision_micro": 0.5910979273370214,
+    "recall_micro": 0.8317631445244505,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.008970579117063492,
+    "threshold": 0.5
+  }
+}

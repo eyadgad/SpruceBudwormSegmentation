@@ -1,0 +1,4 @@
+experiment,model,loss,n_channels,n_params,val_dice_patch,threshold,test_dice_macro,test_dice_micro,test_precision,test_recall,boundary_iou,nsd,bg_fp_rate,source
+REF: RandomForest (notebook best ML),random_forest,-,,,,,0.6832,,,,,,,"reference_notebook (macro, ~10 scenes)"
+REF: AttentionU-Net+Focal (notebook best DL),attention_unet,focal,,,,,0.6412,,,,,,,"reference_notebook (macro, ~10 scenes)"
+gated_attn_unet,attention_unet,focal_tversky,10.0,7857246.0,0.5966,0.15,0.033,0.1356,0.0279,0.046,,,0.00014,this_framework (val; test deferred)

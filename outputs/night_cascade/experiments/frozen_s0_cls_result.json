@@ -1,0 +1,28 @@
+{
+  "name": "frozen_s0_cls",
+  "task": "frozen_scan_head",
+  "model": "attention_unet",
+  "n_params": 7857246,
+  "n_trainable": 513,
+  "best_val_auc": 0.8418980986968605,
+  "best_epoch": 24,
+  "calibrated_threshold": 0.5,
+  "val": {
+    "auroc": 0.8418980986968605,
+    "accuracy": 0.7712418300653595,
+    "precision": 0.842741935483871,
+    "recall": 0.6741935483870968,
+    "f1": 0.7491039426523297,
+    "youden_j": 0.5450544755394147,
+    "n": 612,
+    "n_positive": 310,
+    "n_negative": 302,
+    "confusion": {
+      "tp": 209,
+      "fp": 39,
+      "tn": 263,
+      "fn": 101
+    },
+    "threshold": 0.5
+  }
+}

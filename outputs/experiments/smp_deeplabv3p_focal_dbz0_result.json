@@ -1,0 +1,38 @@
+{
+  "name": "smp_deeplabv3p_focal_dbz0",
+  "model": "smp_deeplabv3p",
+  "loss": "focal",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 22446865,
+  "best_val_dice_patch": 0.7036333305891475,
+  "best_epoch": 35,
+  "calibrated_threshold": 0.45,
+  "test_full_scene": {
+    "dice": 0.6192119402332327,
+    "iou": 0.4799541753892861,
+    "precision": 0.6007787014407601,
+    "recall": 0.6974098847944739,
+    "f1": 0.6192119356767526,
+    "accuracy": 0.976291621987326,
+    "boundary_iou": 0.3885514641685928,
+    "nsd": 0.2910149022489876,
+    "hd95": 83.59346839915561,
+    "assd": 23.856709045639025,
+    "dice_micro": 0.7117137862679438,
+    "iou_micro": 0.5524500523887227,
+    "precision_micro": 0.6607433003119496,
+    "recall_micro": 0.7712054472498655,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.0037368241567460317,
+    "threshold": 0.45
+  }
+}

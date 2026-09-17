@@ -1,0 +1,38 @@
+{
+  "name": "smp_deeplabv3p_dice_boundary",
+  "model": "smp_deeplabv3p",
+  "loss": "dice_boundary",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 22446865,
+  "best_val_dice_patch": 0.6890250373990734,
+  "best_epoch": 35,
+  "calibrated_threshold": 0.3,
+  "test_full_scene": {
+    "dice": 0.5967402787798342,
+    "iou": 0.45857145443129915,
+    "precision": 0.5260695616021739,
+    "recall": 0.7673126667710121,
+    "f1": 0.5967402744817331,
+    "accuracy": 0.9591633795445158,
+    "boundary_iou": 0.2589081982963765,
+    "nsd": 0.16786469972059198,
+    "hd95": 100.78568429390155,
+    "assd": 32.59403018900854,
+    "dice_micro": 0.6875522693128896,
+    "iou_micro": 0.5238702107800766,
+    "precision_micro": 0.5811074970731902,
+    "recall_micro": 0.8417382647174624,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.007369078621031745,
+    "threshold": 0.3
+  }
+}

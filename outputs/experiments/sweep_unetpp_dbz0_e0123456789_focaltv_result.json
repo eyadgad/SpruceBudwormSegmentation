@@ -1,0 +1,43 @@
+{
+  "name": "sweep_unetpp_dbz0_e0123456789_focaltv",
+  "model": "smp_unetpp",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "th_e9",
+    "valid_mask"
+  ],
+  "n_channels": 11,
+  "n_params": 10403603,
+  "best_val_dice_patch": 0.7068834395849889,
+  "best_epoch": 20,
+  "calibrated_threshold": 0.15,
+  "test_full_scene": {
+    "dice": 0.6160374737429565,
+    "iou": 0.4771351076348063,
+    "precision": 0.5866014201205079,
+    "recall": 0.7109496091969422,
+    "f1": 0.6160374692378306,
+    "accuracy": 0.9753665939031757,
+    "boundary_iou": 0.3864530901433496,
+    "nsd": 0.2783550071196653,
+    "hd95": 86.12090701720713,
+    "assd": 25.57030465864587,
+    "dice_micro": 0.7057506769038562,
+    "iou_micro": 0.5452973119704149,
+    "precision_micro": 0.6454502007277706,
+    "recall_micro": 0.7784792454962821,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 34,
+    "bg_fp_rate": 0.003997683057598039,
+    "threshold": 0.15
+  }
+}

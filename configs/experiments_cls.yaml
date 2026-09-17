@@ -1,0 +1,21 @@
+# Scan-level classifiers on the night split, 50 epochs each.
+# Picked for single-GPU transfer on a small radar set:
+#   convnext_tiny     — best compact CNN in 2024–26 domain fine-tune studies
+#   efficientnetv2_s  — strong small-data transfer / efficiency
+#   swin_tiny         — best compact hierarchical transformer in those studies
+#   resnext50         — best CNN in a remote-sensing backbone comparison
+#
+# Input is the same 10-channel stack as the night-split segmenters, resized to 384.
+
+experiments:
+  - name: cls_convnext_tiny
+    model: {name: convnext_tiny, pretrained: true, img_size: 384}
+
+  - name: cls_efficientnetv2_s
+    model: {name: efficientnetv2_s, pretrained: true, img_size: 384}
+
+  - name: cls_swin_tiny
+    model: {name: swin_tiny, pretrained: true, img_size: 384}
+
+  - name: cls_resnext50
+    model: {name: resnext50, pretrained: true, img_size: 384}

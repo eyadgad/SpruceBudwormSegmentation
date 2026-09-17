@@ -1,0 +1,38 @@
+{
+  "name": "sweep_deeplab_dbz0_dembeam_focal",
+  "model": "smp_deeplabv3p",
+  "loss": "focal",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 22446865,
+  "best_val_dice_patch": 0.6917764883898447,
+  "best_epoch": 15,
+  "calibrated_threshold": 0.45,
+  "test_full_scene": {
+    "dice": 0.6039942514012432,
+    "iou": 0.4649474123190766,
+    "precision": 0.570515591502203,
+    "recall": 0.7084724067711792,
+    "f1": 0.6039942469027204,
+    "accuracy": 0.9738588388480286,
+    "boundary_iou": 0.36646557296525006,
+    "nsd": 0.2695123756591358,
+    "hd95": 85.96825640919559,
+    "assd": 25.657071554902874,
+    "dice_micro": 0.6980100280194657,
+    "iou_micro": 0.5361101414304145,
+    "precision_micro": 0.6214257430526225,
+    "recall_micro": 0.7961240722101702,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.005714564732142857,
+    "threshold": 0.45
+  }
+}

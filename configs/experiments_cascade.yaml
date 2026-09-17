@@ -1,0 +1,15 @@
+# One model, cascade behaviour.
+# Attention U-Net (best segmenter) + scan-level cls head + Kendall UW + hard gate.
+# Initialised from S0 so segmentation does not start from scratch (soft-gate
+# hybrids lost ~0.07 Dice). Classifier is trained on the scan label via
+# ScanClsDataset, not patch occupancy (the S2 failure). At eval a hard gate
+# zeros quiet scans and leaves swarm maps unscaled (no plume shrink).
+
+experiments:
+  - name: gated_attn_unet
+    model:
+      name: attention_unet
+      base_filters: 32
+      cls_head: true
+      img_size: 384
+      init_checkpoint: outputs/night_split/checkpoints/night_base_attunet9_best.pt

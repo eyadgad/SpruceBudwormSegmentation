@@ -1,0 +1,16 @@
+# Literature single-model cascade-like variants. Same night split, 50 epochs,
+# no early stop. Scan-level cls (manifest label) + Kendall UW + eval gate.
+#
+#   gated_swin_attn  — Swin-T encoder + Attention U-Net decoder (recommended)
+#   swin_unet        — Cao et al. Swin-UNet idea (github.com/HuCaoFighting/Swin-Unet)
+#   transunet        — Chen et al. R50-ViT + CUP (github.com/Beckschen/TransUNet)
+
+experiments:
+  - name: gated_swin_attn_night
+    model: {name: gated_swin_attn, img_size: 256}
+
+  - name: swin_unet_night
+    model: {name: swin_unet, img_size: 256}
+
+  - name: transunet_night
+    model: {name: transunet}

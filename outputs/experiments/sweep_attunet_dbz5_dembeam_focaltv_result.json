@@ -1,0 +1,38 @@
+{
+  "name": "sweep_attunet_dbz5_dembeam_focaltv",
+  "model": "attention_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 7855581,
+  "best_val_dice_patch": 0.6524913694094819,
+  "best_epoch": 26,
+  "calibrated_threshold": 0.15,
+  "test_full_scene": {
+    "dice": 0.5210793449321034,
+    "iou": 0.381917176136807,
+    "precision": 0.4802364642654202,
+    "recall": 0.6376893501076155,
+    "f1": 0.5210793405831723,
+    "accuracy": 0.9827810840481919,
+    "boundary_iou": 0.3389472696737873,
+    "nsd": 0.3297525378027947,
+    "hd95": 86.5418110175651,
+    "assd": 25.192541894889274,
+    "dice_micro": 0.6458233172051232,
+    "iou_micro": 0.4769121529047543,
+    "precision_micro": 0.5548557264121221,
+    "recall_micro": 0.7724680548759514,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.0023204985119047615,
+    "threshold": 0.15
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "attention_unet_focal",
+  "model": "attention_unet",
+  "loss": "focal",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "dem",
+    "bh_e0",
+    "valid_mask"
+  ],
+  "n_channels": 6,
+  "n_params": 7855581,
+  "best_val_dice_patch": 0.6678629217899511,
+  "best_epoch": 24,
+  "calibrated_threshold": 0.45,
+  "test_full_scene": {
+    "dice": 0.6127539099807182,
+    "iou": 0.4714913368781142,
+    "precision": 0.5694926145149825,
+    "recall": 0.7433819743349983,
+    "f1": 0.6127539055195488,
+    "accuracy": 0.9613911930657577,
+    "boundary_iou": 0.33021985171652063,
+    "nsd": 0.2220274782854589,
+    "hd95": 97.14551244760223,
+    "assd": 30.3667001407097,
+    "dice_micro": 0.68727672802601,
+    "iou_micro": 0.5235503496426379,
+    "precision_micro": 0.605380158353851,
+    "recall_micro": 0.7947979715908395,
+    "n_pos_scenes": 170,
+    "n_neg_scenes": 35,
+    "bg_fp_rate": 0.010227213541666665,
+    "threshold": 0.45
+  }
+}

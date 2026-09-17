@@ -1,0 +1,43 @@
+{
+  "name": "night_ltae_attunet9",
+  "model": "attention_unet",
+  "loss": "focal_tversky",
+  "channels": [
+    "th_e0",
+    "th_e1",
+    "th_e2",
+    "th_e3",
+    "th_e4",
+    "th_e5",
+    "th_e6",
+    "th_e7",
+    "th_e8",
+    "valid_mask"
+  ],
+  "n_channels": 10,
+  "n_params": 7892190,
+  "best_val_dice_patch": 0.6668831556970835,
+  "best_epoch": 52,
+  "calibrated_threshold": 0.15,
+  "defer_test": true,
+  "val_full_scene": {
+    "dice": 0.5755941371423449,
+    "iou": 0.4389457713927565,
+    "precision": 0.5820159859719537,
+    "recall": 0.6527756380428048,
+    "f1": 0.5755941327973716,
+    "accuracy": 0.9777922897065305,
+    "boundary_iou": 0.3602980416734397,
+    "nsd": 0.2565871257335262,
+    "hd95": 93.91697167979312,
+    "assd": 28.69580804942204,
+    "dice_micro": 0.6906678292404997,
+    "iou_micro": 0.527496264633799,
+    "precision_micro": 0.6457836441958705,
+    "recall_micro": 0.7422572626804791,
+    "n_pos_scenes": 310,
+    "n_neg_scenes": 93,
+    "bg_fp_rate": 0.006250886723416965,
+    "threshold": 0.15
+  }
+}
