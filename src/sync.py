@@ -208,7 +208,8 @@ class RunSync:
 
 def _artifact_files(cfg: dict) -> List[Path]:
     adir = ROOT / str((cfg.get("data") or {}).get("artifacts_dir", "artifacts_night"))
-    return [adir / n for n in ("manifest.csv", "norm_stats.json", "split_summary.json")]
+    return [adir / n for n in ("manifest.csv", "norm_stats.json", "split_summary.json",
+                               "manifest.sha256")]
 
 
 def push_artifacts(cfg: dict, logger: Optional[logging.Logger] = None) -> int:
@@ -224,6 +225,7 @@ def push_artifacts(cfg: dict, logger: Optional[logging.Logger] = None) -> int:
     if not s._connect():
         return 0
     adir = str((cfg.get("data") or {}).get("artifacts_dir", "artifacts_night"))
+    write_fingerprint(cfg)
     sent = 0
     for path in _artifact_files(cfg):
         if not path.exists():
@@ -286,3 +288,57 @@ def manifest_fingerprint(cfg: dict) -> Optional[str]:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _fingerprint_path(cfg: dict) -> Path:
+    adir = ROOT / str((cfg.get("data") or {}).get("artifacts_dir", "artifacts_night"))
+    return adir / "manifest.sha256"
+
+
+def write_fingerprint(cfg: dict) -> Optional[str]:
+    fp = manifest_fingerprint(cfg)
+    if fp:
+        path = _fingerprint_path(cfg)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(fp + "\n", encoding="utf-8")
+    return fp
+
+
+def check_manifest(cfg: dict, logger: Optional[logging.Logger] = None,
+                   strict: bool = True) -> bool:
+    """Verify this machine's manifest matches the mirrored one.
+
+    Two machines training halves of one experiment MUST share a split. The
+    split is not reproducible from the config alone: negatives are sampled
+    before the night->split assignment, so any difference in ``Data/`` moves
+    nights between train/val/test. Comparing the recorded SHA-256 turns a silent
+    divergence into an immediate stop.
+    """
+    lg = logger or log
+    local = manifest_fingerprint(cfg)
+    if local is None:
+        msg = ("manifest missing: this machine has no frozen split. Pull it "
+               "(src.sync.pull_artifacts) before training; do NOT run data_prep, "
+               "which would build a different split.")
+        if strict:
+            raise SystemExit(f"[sync] {msg}")
+        lg.warning(f"sync: {msg}")
+        return False
+    recorded = _fingerprint_path(cfg)
+    if not recorded.exists():
+        lg.info(f"sync: manifest sha256={local[:16]}… (no mirrored fingerprint to "
+                f"compare against yet)")
+        return True
+    want = recorded.read_text(encoding="utf-8").strip()
+    if want and want != local:
+        msg = (f"MANIFEST MISMATCH — this machine's split differs from the mirror.\n"
+               f"         local  {local}\n"
+               f"         mirror {want}\n"
+               f"  Results from the two machines are NOT comparable. Delete the local "
+               f"artifacts dir and re-pull rather than training against this split.")
+        if strict:
+            raise SystemExit(f"[sync] {msg}")
+        lg.warning(f"sync: {msg}")
+        return False
+    lg.info(f"sync: manifest sha256={local[:16]}… matches the mirror")
+    return True

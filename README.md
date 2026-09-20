@@ -29,16 +29,36 @@ pip install -r requirements.txt
 IMPORTANT: use the project venv interpreter (it has torch/netCDF4/smp), NOT the conda
 base `python`. On Windows use `run.bat`, which always invokes `.venv\Scripts\python.exe`.
 
+> **Never pass `--fresh` for the publication runs.** It clears outputs *and* re-preps the
+> data, which rebuilds `artifacts_night/`. A rebuilt manifest is not the frozen split:
+> negatives are sampled **before** the night→split assignment, so any difference in
+> `Data/` moves nights between train/val/test. That is how the superseded split arose.
+> See `docs/RUNBOOK_publication.md`.
+
+### Publication runs (current protocol)
+
 ```bat
-:: ONE COMMAND — clean rerun of all experiments end to end (+ ensemble):
-run.bat --fresh --ensemble
+:: machine A — 5x Attention U-Net (final spatial model)
+run.bat --base-config configs\base_config_night.yaml ^
+        --experiments configs\experiments_night_seeds_a.yaml
 
-:: Resume/continue (skips experiments whose result JSON already exists):
-run.bat
-
-:: equivalently, without the launcher:
-.venv\Scripts\python -m src.run --fresh --ensemble
+:: machine B — 5x U-Net (reference baseline), then 4x Swin-Tiny (presence model)
+run.bat --base-config configs\base_config_night.yaml ^
+        --experiments configs\experiments_night_seeds_b.yaml
+.venv\Scripts\python.exe -m src.classify --all ^
+        --base-config configs\base_config_cascade_cls.yaml ^
+        --experiments configs\experiments_cls_seeds.yaml
 ```
+
+Re-run the identical command after any interruption: finished runs are skipped, the
+interrupted one resumes from its last snapshot. Full procedure, including the test
+freeze, is in `docs/RUNBOOK_publication.md`.
+
+### Legacy Phase-3 sweep (superseded split — development screening only)
+
+`run.bat --fresh --ensemble` reproduces the original architecture sweep on the old
+scan-level split. Its numbers are **not comparable** to the publication runs above and
+must not be tabulated beside them.
 
 Other entry points (also via the venv python):
 

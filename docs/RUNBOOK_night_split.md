@@ -1,4 +1,21 @@
-# Runbook — night-split ablation
+# Runbook — night-split ablation (SUPERSEDED)
+
+> ## ⚠ Do not follow this for the paper
+>
+> This describes the S0–S3b ablation chain, which ran on an **earlier dataset
+> revision** (`negatives: ratio 0.3`, unbalanced — ~1440 training scans). The
+> current frozen split uses `balanced: true, ratio: 1.0` (2158 training scans),
+> and because negatives are sampled *before* the night→split assignment, the two
+> eras do not even share the same validation scenes.
+>
+> Those runs are **development-stage architecture screening**: they informed which
+> architecture was carried forward, and their numbers must never appear beside
+> publication results.
+>
+> **For the publication retrain, use [`RUNBOOK_publication.md`](RUNBOOK_publication.md).**
+>
+> Kept here because the resume/interrupt mechanics, the timing figures, and the
+> troubleshooting table below still describe how the trainer behaves.
 
 How to run, interrupt, and resume the night-split experiment chain. Every command
 is safe to re-run: finished experiments are skipped and an interrupted one

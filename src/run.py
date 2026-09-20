@@ -141,10 +141,15 @@ def run_all(base_config_path: str, experiments_path: str, verbose=True, fresh=Fa
     from . import sync
     sync.pull_artifacts(base_cfg)
     ensure_artifacts(base_cfg, verbose=verbose)  # runs data prep in-parent if needed
+    # Verify against the mirror before training, then publish the split so a
+    # second machine (e.g. running the classifier seeds) inherits it instead of
+    # building its own.
+    sync.check_manifest(base_cfg)
+    sync.push_artifacts(base_cfg)
     if verbose:
         fp = sync.manifest_fingerprint(base_cfg)
         if fp:
-            print(f"[manifest] sha256={fp[:16]}…  (record this in FROZEN.md)")
+            print(f"[manifest] sha256={fp}  (record this in FROZEN.md)")
 
     if verbose and torch.cuda.is_available():
         print(f"[device] cuda ({torch.cuda.get_device_name(0)})")

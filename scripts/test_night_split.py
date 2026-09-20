@@ -598,11 +598,40 @@ class PublicationMetrics(unittest.TestCase):
         base = cfgmod.load_base_config(ROOT / "configs" / "base_config_night.yaml")
         exps = cfgmod.load_experiments(ROOT / "configs" / "experiments_night_seeds.yaml")
         names = [e["name"] for e in exps]
-        self.assertEqual(len(names), 8)
-        cfg = cfgmod.resolve_experiment(base, exps[0])
-        self.assertEqual(cfg["train"]["seed"], 42)
-        self.assertEqual(cfg["split"]["seed"], 42)
-        self.assertEqual(cfg["eval"].get("gate"), "off")
+        self.assertEqual(len(names), len(set(names)), "duplicate experiment name")
+
+        by_model = {}
+        for e in exps:
+            cfg = cfgmod.resolve_experiment(base, e)
+            by_model.setdefault(cfg["model"]["name"], []).append(cfg)
+            # split.seed must stay fixed, or the seed families would be measuring
+            # split variance rather than initialisation variance.
+            self.assertEqual(cfg["split"]["seed"], 42, e["name"])
+            self.assertEqual(cfg["eval"].get("gate"), "off", e["name"])
+            self.assertTrue(cfg["eval"].get("defer_test"), e["name"])
+            self.assertTrue(cfg["negatives"]["balanced"], e["name"])
+            self.assertEqual(float(cfg["negatives"]["ratio"]), 1.0, e["name"])
+
+        self.assertEqual(set(by_model), {"attention_unet", "unet"})
+        for model, cfgs in by_model.items():
+            seeds = [c["train"]["seed"] for c in cfgs]
+            self.assertEqual(len(seeds), len(set(seeds)), f"{model} has duplicate seeds")
+            self.assertGreaterEqual(len(seeds), 3, f"{model} needs >=3 seeds for mean+-SD")
+
+    def test_per_machine_seed_files_partition_the_combined_set(self):
+        """A and B must together cover the combined YAML exactly, with no overlap.
+
+        An overlap wastes a ~21 h run on the wrong machine; a gap means
+        src.finalize scores a checkpoint that was never trained.
+        """
+        from src import config as cfgmod
+        def names(p):
+            return [e["name"] for e in cfgmod.load_experiments(ROOT / "configs" / p)]
+        combined = set(names("experiments_night_seeds.yaml"))
+        a = set(names("experiments_night_seeds_a.yaml"))
+        b = set(names("experiments_night_seeds_b.yaml"))
+        self.assertEqual(a & b, set(), "same run assigned to both machines")
+        self.assertEqual(a | b, combined, "A+B does not equal the combined set")
 
     def test_calibrate_cls_uses_sensitivity_floor(self):
         from src.engine import calibrate_cls_threshold, metrics_from_cache

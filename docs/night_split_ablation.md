@@ -1,5 +1,18 @@
 # Leakage-free night split and controlled ablation
 
+> **Status: the night-split *design* below is current; the S0–S3b *results* are not.**
+>
+> Sections 1–5 (why a night split, the corpus measurements, the literature review,
+> the split construction, the implementation) still describe the protocol in use.
+>
+> Section 6 onward describes the S0–S3b ablation, which ran on an earlier dataset
+> revision (`negatives: ratio 0.3`) whose validation scenes differ from the frozen
+> split. Treat those as **development-stage architecture screening** — they justified
+> carrying Attention U-Net forward, and are not comparable to publication numbers.
+> `lambda_cls` is likewise a screening artefact; no reported model uses it.
+>
+> Publication procedure: [`RUNBOOK_publication.md`](RUNBOOK_publication.md).
+
 Status: implementation complete and verified; training in progress. Results
 sections are marked **PENDING** and will be filled from the runs, not predicted.
 

@@ -400,7 +400,13 @@ def run_all(base_path: str, experiments_path: str, compare: bool = True) -> None
     import subprocess, sys
     for exp in experiments:
         name = exp["name"]
-        if ckpt.is_done(paths.experiments_dir(cfgmod.resolve_experiment(base, exp)), name):
+        _cfg = cfgmod.resolve_experiment(base, exp)
+        _exp_dir = paths.experiments_dir(_cfg)
+        # Pull before the done-check, so re-running this command on the machine
+        # that did NOT train these seeds collects them instead of retraining.
+        if not ckpt.is_done(_exp_dir, name):
+            sync.pull_run(_cfg, name, paths.checkpoint_dir(_cfg), _exp_dir)
+        if ckpt.is_done(_exp_dir, name):
             print(f"[skip] {name}: result exists")
             continue
         print(f"\n=== launching {name} ===", flush=True)
@@ -426,6 +432,12 @@ if __name__ == "__main__":
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--compare-only", action="store_true")
     args = ap.parse_args()
+    # This entry point bypasses src.run, so it must fetch and verify the frozen
+    # split itself. Running the classifier seeds on a second machine is only
+    # valid if that machine trains against the same manifest.
+    _base = cfgmod.load_base_config(args.base_config)
+    sync.pull_artifacts(_base)
+    sync.check_manifest(_base)
     if args.compare_only:
         compare_to_segmentation(args.base_config, args.experiments,
                                 "configs/base_config_night.yaml",

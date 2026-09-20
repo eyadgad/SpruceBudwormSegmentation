@@ -44,3 +44,9 @@ experiments:
   - name: unet_night_s44
     <<: *unet
     train: {epochs: 100, patience: 50, seed: 44}
+  - name: unet_night_s45
+    <<: *unet
+    train: {epochs: 100, patience: 50, seed: 45}
+  - name: unet_night_s46
+    <<: *unet
+    train: {epochs: 100, patience: 50, seed: 46}

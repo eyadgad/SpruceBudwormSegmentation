@@ -1,0 +1,34 @@
+# MACHINE A — final spatial model only: 5 Attention U-Net seeds (~106 h).
+#
+# Split out of experiments_night_seeds.yaml so two machines can share the
+# retrain. Machine A is the critical path and also PUBLISHES the frozen split
+# (src.run pushes artifacts_night/ before training), so start it first and wait
+# for the "[manifest] sha256=..." line before launching machine B.
+#
+# The combined experiments_night_seeds.yaml still lists all 8 runs and is what
+# src.finalize uses once both machines are done.
+
+_attn: &attn
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: attention_unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  eval:   {tta: false, gate: "off", defer_test: true}
+
+experiments:
+  - name: night_base_attunet9_s42
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 42}
+  - name: night_base_attunet9_s43
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 43}
+  - name: night_base_attunet9_s44
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 44}
+  - name: night_base_attunet9_s45
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 45}
+  - name: night_base_attunet9_s46
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 46}
