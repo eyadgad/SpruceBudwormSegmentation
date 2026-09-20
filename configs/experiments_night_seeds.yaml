@@ -1,0 +1,46 @@
+# Publication retrains on the frozen night split (balanced negatives, ratio 1.0).
+# split.seed stays 42 so SD is initialisation / crop / augmentation only.
+# Test stays deferred. Do not mix these numbers with S0–S3b (superseded split).
+
+_attn: &attn
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: attention_unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  eval:   {tta: false, gate: "off", defer_test: true}
+
+_unet: &unet
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  eval:   {tta: false, gate: "off", defer_test: true}
+
+experiments:
+  - name: night_base_attunet9_s42
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 42}
+  - name: night_base_attunet9_s43
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 43}
+  - name: night_base_attunet9_s44
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 44}
+  - name: night_base_attunet9_s45
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 45}
+  - name: night_base_attunet9_s46
+    <<: *attn
+    train: {epochs: 100, patience: 50, seed: 46}
+
+  - name: unet_night_s42
+    <<: *unet
+    train: {epochs: 100, patience: 50, seed: 42}
+  - name: unet_night_s43
+    <<: *unet
+    train: {epochs: 100, patience: 50, seed: 43}
+  - name: unet_night_s44
+    <<: *unet
+    train: {epochs: 100, patience: 50, seed: 44}

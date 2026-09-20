@@ -24,7 +24,7 @@ import numpy as np
 from scipy import stats
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 NIGHT_BOUNDARY_UTC_HOUR = 12
 DEFAULT_GT_MIN_CELLS = 1
 DEFAULT_PRED_MIN_CELLS = 1
@@ -166,6 +166,92 @@ def roc_analysis(truth: Sequence[int | bool], scores: Sequence[float]) -> Dict:
             "n_positive": n_pos, "n_negative": n_neg}
 
 
+def pr_analysis(truth: Sequence[int | bool], scores: Sequence[float],
+                n_recall_grid: int = 101) -> Dict:
+    """Step-function average precision and a fixed recall-grid PR curve.
+
+    ``AP = Σ (R_k − R_{k−1}) · P_k`` (not trapezoidal). ``baseline_precision``
+    is the positive prevalence in this cohort — negatives are subsampled, so
+    AUPRC is not an operational rate.
+    """
+    y = _binary_truth(truth)
+    s = _finite_scores(scores)
+    if y.size != s.size:
+        raise ValueError("truth and scores must have the same length")
+    n_pos, n_neg = int(y.sum()), int((~y).sum())
+    baseline = _ratio(n_pos, n_pos + n_neg)
+    if not s.size:
+        return {"ap": None, "baseline_precision": baseline, "points": [],
+                "n_positive": 0, "n_negative": 0}
+    unique = sorted((float(v) for v in np.unique(s)), reverse=True)
+    thresholds = [float(unique[0] + 1.0), *unique]
+    raw = []
+    for cutoff in thresholds:
+        m = classification_metrics(y, s, cutoff)
+        raw.append({
+            "cutoff": cutoff,
+            "precision": m["precision"],
+            "recall": m["sensitivity"],
+        })
+    ap = None
+    if n_pos:
+        ap_value = 0.0
+        prev_r = 0.0
+        for pt in raw:
+            rec = pt["recall"]
+            prec = pt["precision"]
+            if rec is None or prec is None:
+                continue
+            if rec > prev_r:
+                ap_value += (rec - prev_r) * prec
+                prev_r = rec
+        ap = float(ap_value)
+    grid = []
+    recalls = np.linspace(0.0, 1.0, int(n_recall_grid))
+    rec_arr = np.asarray([0.0 if p["recall"] is None else p["recall"] for p in raw],
+                         dtype=np.float64)
+    prec_arr = np.asarray([0.0 if p["precision"] is None else p["precision"] for p in raw],
+                          dtype=np.float64)
+    for r in recalls:
+        # Precision at the first operating point that reaches this recall.
+        hit = np.where(rec_arr >= r)[0]
+        prec = float(prec_arr[hit[0]]) if hit.size else (
+            float(prec_arr[-1]) if prec_arr.size else None)
+        grid.append({"recall": float(r), "precision": prec})
+    return {"ap": ap, "baseline_precision": baseline, "points": grid,
+            "n_positive": n_pos, "n_negative": n_neg}
+
+
+def select_high_sensitivity_cutoff(truth: Sequence[int | bool],
+                                   scores: Sequence[float],
+                                   r_min: float = 0.98) -> Dict:
+    """Maximise specificity subject to sensitivity ≥ ``r_min`` on validation."""
+    y = _binary_truth(truth)
+    s = _finite_scores(scores)
+    if not s.size:
+        raise ValueError("cannot select a cutoff from an empty cohort")
+    if not y.any() or y.all():
+        raise ValueError("high-sensitivity selection requires both truth classes")
+    candidates = [float(s.max() + 1.0), *sorted((float(v) for v in np.unique(s)), reverse=True)]
+    evaluated = [classification_metrics(y, s, cutoff) for cutoff in candidates]
+    eligible = [m for m in evaluated
+                if m["sensitivity"] is not None and m["sensitivity"] >= float(r_min)]
+    pool = eligible if eligible else evaluated
+    best = max(pool, key=lambda m: (
+        m["specificity"] if m["specificity"] is not None else -1.0,
+        m["sensitivity"] if m["sensitivity"] is not None else -1.0,
+        m["cutoff"],
+    ))
+    return {
+        "cutoff": best["cutoff"],
+        "criterion": f"max_specificity_subject_to_sensitivity_ge_{r_min}",
+        "r_min": float(r_min),
+        "met_constraint": bool(eligible),
+        "validation_specificity": best["specificity"],
+        "validation_sensitivity": best["sensitivity"],
+    }
+
+
 def select_youden_cutoff(truth: Sequence[int | bool], scores: Sequence[float]) -> Dict:
     """Select a validation cutoff by Youden J with deterministic tie breaks.
 
@@ -244,11 +330,20 @@ def _score_summary(values: Sequence[float]) -> Dict:
 
 def _split_analysis(rows: Sequence[Mapping], selected_cutoff: float,
                     include_records: bool = False,
-                    include_mann_whitney: bool = True) -> Dict:
+                    include_mann_whitney: bool = True,
+                    include_any_cell: bool = True,
+                    high_sens_cutoff: float | None = None) -> Dict:
     truth = [int(r["truth"]) for r in rows]
     scores = [float(r["score"]) for r in rows]
     positive = sorted(float(r["score"]) for r in rows if int(r["truth"]) == 1)
     negative = sorted(float(r["score"]) for r in rows if int(r["truth"]) == 0)
+    ops = {
+        "validation_selected": classification_metrics(truth, scores, selected_cutoff),
+    }
+    if include_any_cell:
+        ops["any_cell"] = classification_metrics(truth, scores, DEFAULT_PRED_MIN_CELLS)
+    if high_sens_cutoff is not None:
+        ops["high_sensitivity"] = classification_metrics(truth, scores, high_sens_cutoff)
     result = {
         "n": len(rows),
         "n_positive": len(positive),
@@ -259,10 +354,8 @@ def _split_analysis(rows: Sequence[Mapping], selected_cutoff: float,
         },
         "distributions": {"positive": positive, "negative": negative},
         "roc": roc_analysis(truth, scores),
-        "operating_points": {
-            "any_cell": classification_metrics(truth, scores, DEFAULT_PRED_MIN_CELLS),
-            "validation_selected": classification_metrics(truth, scores, selected_cutoff),
-        },
+        "pr": pr_analysis(truth, scores),
+        "operating_points": ops,
     }
     if include_mann_whitney:
         result["mann_whitney"] = mann_whitney_analysis(truth, scores)
@@ -290,8 +383,18 @@ def _count_truth(rows: Iterable[Mapping]) -> Dict[str, int]:
 
 
 def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
-                     generated: str | None = None) -> Dict:
-    """Build the complete GPU-free presence-analysis JSON document."""
+                     generated: str | None = None,
+                     score_field: str = "pred_area",
+                     r_min: float = 0.98) -> Dict:
+    """Build the complete GPU-free presence-analysis JSON document.
+
+    ``score_field`` is ``pred_area`` (segmentation-area baseline) or ``p_cls``
+    (classifier probability). Both scan-level ROC/PR and night aggregation
+    use the same field.
+    """
+    if score_field not in {"pred_area", "p_cls"}:
+        raise ValueError(f"score_field must be pred_area or p_cls, got {score_field!r}")
+    use_area = score_field == "pred_area"
     sample_rows = list(samples_doc.get("samples") or [])
     dataset_rows = list(dataset_doc.get("scenes") or [])
     model_specs = list(samples_doc.get("models") or [])
@@ -493,18 +596,34 @@ def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
         scene_rows: List[Dict] = []
         for base in evaluation_base:
             raw = sample_by_ts[base["ts"]]
-            values = (raw.get("models") or {}).get(key)
-            if values is None or values.get("pred_area") is None:
-                raise ValueError(f"missing pred_area for {key}/{base['ts']}")
-            score = _integer_area(values["pred_area"],
-                                  f"predicted area for {key}/{base['ts']}", grid_cells)
-            scene_rows.append({**base, "score": float(score)})
+            values = (raw.get("models") or {}).get(key) or {}
+            if use_area:
+                if values.get("pred_area") is None:
+                    raise ValueError(f"missing pred_area for {key}/{base['ts']}")
+                score = float(_integer_area(values["pred_area"],
+                                           f"predicted area for {key}/{base['ts']}",
+                                           grid_cells))
+            else:
+                raw_p = values.get("p_cls", raw.get("p_cls"))
+                if raw_p is None:
+                    raise ValueError(f"missing p_cls for {key}/{base['ts']}")
+                try:
+                    score = float(raw_p)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"p_cls for {key}/{base['ts']} must be numeric") from exc
+                if not np.isfinite(score) or not 0.0 <= score <= 1.0:
+                    raise ValueError(f"p_cls for {key}/{base['ts']} must be in [0, 1], got {raw_p!r}")
+            scene_rows.append({**base, "score": score})
 
         val_scene = [r for r in scene_rows if r["split"] == "val"]
         test_scene = [r for r in scene_rows if r["split"] == "test"]
         scan_selection = select_youden_cutoff(
             [r["truth"] for r in val_scene], [r["score"] for r in val_scene])
         scan_cutoff = float(scan_selection["cutoff"])
+        scan_high = select_high_sensitivity_cutoff(
+            [r["truth"] for r in val_scene], [r["score"] for r in val_scene],
+            r_min=r_min)
+        scan_high_cutoff = float(scan_high["cutoff"])
 
         night_results = {}
         for aggregation in ("max", "mean"):
@@ -534,18 +653,31 @@ def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
             selection = select_youden_cutoff(
                 [r["truth"] for r in val_night], [r["score"] for r in val_night])
             cutoff = float(selection["cutoff"])
+            night_high = select_high_sensitivity_cutoff(
+                [r["truth"] for r in val_night], [r["score"] for r in val_night],
+                r_min=r_min)
+            if use_area:
+                score_def = ("maximum predicted SBW-cell count among evaluated scans"
+                             if aggregation == "max" else
+                             "mean predicted SBW-cell count across evaluated scans")
+                cutoff_block = {**selection, "cells": cutoff,
+                                "km2": float(cutoff * pixel_area_km2)}
+            else:
+                score_def = (f"{aggregation} classifier probability among evaluated scans")
+                cutoff_block = {**selection, "probability": cutoff}
             night_results[aggregation] = {
-                "score_definition": ("maximum predicted SBW-cell count among evaluated scans"
-                                     if aggregation == "max" else
-                                     "mean predicted SBW-cell count across evaluated scans"),
-                "selected_cutoff": {
-                    **selection,
-                    "cells": cutoff,
-                    "km2": float(cutoff * pixel_area_km2),
-                },
+                "score_definition": score_def,
+                "selected_cutoff": cutoff_block,
+                "high_sensitivity_cutoff": night_high,
                 "splits": {
-                    "validation": _split_analysis(val_night, cutoff, include_records=True),
-                    "test": _split_analysis(test_night, cutoff, include_records=True),
+                    "validation": _split_analysis(
+                        val_night, cutoff, include_records=True,
+                        include_any_cell=use_area,
+                        high_sens_cutoff=float(night_high["cutoff"])),
+                    "test": _split_analysis(
+                        test_night, cutoff, include_records=True,
+                        include_any_cell=use_area,
+                        high_sens_cutoff=float(night_high["cutoff"])),
                 },
             }
 
@@ -556,17 +688,28 @@ def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
             "selected": key == default_model_key,
             "pixel_probability_threshold": pixel_threshold,
             "scan": {
-                "score_definition": "full-resolution count of pixels with probability above the locked pixel threshold",
-                "selected_cutoff": {
-                    **scan_selection,
-                    "cells": scan_cutoff,
-                    "km2": float(scan_cutoff * pixel_area_km2),
-                },
+                "score_definition": (
+                    "full-resolution count of pixels with probability above the locked pixel threshold"
+                    if use_area else
+                    "scan-level classifier probability p_cls"
+                ),
+                "score_field": score_field,
+                "selected_cutoff": (
+                    {**scan_selection, "cells": scan_cutoff,
+                     "km2": float(scan_cutoff * pixel_area_km2)}
+                    if use_area else
+                    {**scan_selection, "probability": scan_cutoff}
+                ),
+                "high_sensitivity_cutoff": scan_high,
                 "splits": {
                     "validation": _split_analysis(
-                        val_scene, scan_cutoff, include_mann_whitney=False),
+                        val_scene, scan_cutoff, include_mann_whitney=False,
+                        include_any_cell=use_area,
+                        high_sens_cutoff=scan_high_cutoff),
                     "test": _split_analysis(
-                        test_scene, scan_cutoff, include_mann_whitney=False),
+                        test_scene, scan_cutoff, include_mann_whitney=False,
+                        include_any_cell=use_area,
+                        high_sens_cutoff=scan_high_cutoff),
                 },
             },
             "night": night_results,
@@ -587,7 +730,12 @@ def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
         "definitions": {
             "ground_truth_scan_presence": "gt_area >= 1 full-resolution cell",
             "ground_truth_min_cells": DEFAULT_GT_MIN_CELLS,
-            "prediction_score": "pred_area at each model's locked pixel probability threshold",
+            "score_field": score_field,
+            "prediction_score": (
+                "pred_area at each model's locked pixel probability threshold"
+                if use_area else
+                "scan-level classifier probability p_cls"
+            ),
             "prediction_any_cell_cutoff": DEFAULT_PRED_MIN_CELLS,
             "area_rule": "score >= cutoff",
             "threshold_selection": "maximize validation Youden J; ties prefer higher specificity, then higher cutoff",

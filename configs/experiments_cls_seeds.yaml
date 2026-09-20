@@ -1,0 +1,16 @@
+# Extra Swin-Tiny seeds on the balanced night split.
+# cls_swin_tiny_bal (seed 42) already exists and is kept; do not retrain it.
+
+experiments:
+  - name: cls_swin_tiny_bal_s43
+    model: {name: swin_tiny, pretrained: true, img_size: 384}
+    train: {seed: 43}
+  - name: cls_swin_tiny_bal_s44
+    model: {name: swin_tiny, pretrained: true, img_size: 384}
+    train: {seed: 44}
+  - name: cls_swin_tiny_bal_s45
+    model: {name: swin_tiny, pretrained: true, img_size: 384}
+    train: {seed: 45}
+  - name: cls_swin_tiny_bal_s46
+    model: {name: swin_tiny, pretrained: true, img_size: 384}
+    train: {seed: 46}

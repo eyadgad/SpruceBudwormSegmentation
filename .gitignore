@@ -1,3 +1,10 @@
+# --- Secrets: HF_TOKEN etc. NEVER commit this file ---
+.env
+.env.local
+
+# --- Local agent plans ---
+.claude/
+
 # --- Python environment / caches ---
 .venv/
 __pycache__/

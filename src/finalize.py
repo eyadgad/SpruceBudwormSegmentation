@@ -84,8 +84,13 @@ def finalize_one(cfg: Dict, manifest, norm_stats, device, verbose: bool = True) 
         model, test_rows, cfg, norm_stats, device, threshold=threshold,
         tta=bool(cfg["eval"].get("tta", True)))
 
+    per_scene = test_metrics.pop("per_scene", None)
     out = dict(train_result)
     out["test_full_scene"] = test_metrics
+    if per_scene is not None:
+        per_path = exp_dir / f"{name}_test_per_scene.json"
+        with open(per_path, "w", encoding="utf-8") as f:
+            json.dump(per_scene, f, indent=2, default=str)
     out["threshold_source"] = "calibrated on validation during training; not refit on test"
     with open(final_path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, default=str)

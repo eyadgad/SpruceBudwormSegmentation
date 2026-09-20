@@ -76,10 +76,11 @@ eval:
   boundary_metrics: true
   nsd_tolerance: 2.0
   threshold_range: [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
-  cls_threshold_range: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  cls_threshold_range: [1.0e-6, 2.2e-6, 4.6e-6, 1.0e-5, 2.2e-5, 4.6e-5, 1.0e-4, 2.2e-4, 4.6e-4, 1.0e-3, 2.2e-3, 4.6e-3, 1.0e-2, 2.2e-2, 4.6e-2, 1.0e-1, 2.2e-1, 4.6e-1, 9.0e-1]
+  cls_r_min: 0.98
   calib_max_scenes: 50
   defer_test: true
-  gate: hard
+  gate: "hard"
 
 model:
   name: attention_unet

@@ -9,10 +9,34 @@ drawn a pixel or two too wide:
 """
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 from scipy import ndimage
+
+# XAM Cartesian grid. One cell is 500 m on a side (confirmed in the radar
+# product; do not hardcode this literal at call sites).
+PIXEL_M = 500.0
+PIXEL_KM = PIXEL_M / 1000.0
+PIXEL_AREA_KM2 = PIXEL_KM ** 2
+DEFAULT_NSD_TAUS_PX = (1, 2, 3, 4, 6, 8, 10, 14, 20)
+DEFAULT_BF1_SIGMA_PX = 2.0
+
+
+def px_to_km(px) -> float:
+    return float(px) * PIXEL_KM
+
+
+def km_to_px(km) -> float:
+    return float(km) / PIXEL_KM
+
+
+def cells_to_km2(n_cells) -> float:
+    return float(n_cells) * PIXEL_AREA_KM2
+
+
+def km2_to_cells(area_km2) -> float:
+    return float(area_km2) / PIXEL_AREA_KM2
 
 
 def compute_metrics(pred: np.ndarray, true: np.ndarray) -> Dict[str, float]:
@@ -70,24 +94,76 @@ def _surface_distances(pred: np.ndarray, true: np.ndarray):
     return dt_from_true[sp], dt_from_pred[st]  # pred-surface distances, true-surface distances
 
 
-def surface_metrics(pred: np.ndarray, true: np.ndarray, tau: float = 2.0) -> Dict[str, float]:
+def _bf1_from_distances(d_pred: np.ndarray, d_true: np.ndarray, theta: float) -> float:
+    """Hard-tolerance Csurka boundary F1 at distance θ (px)."""
+    prec = float((d_pred <= theta).mean()) if d_pred.size else 0.0
+    rec = float((d_true <= theta).mean()) if d_true.size else 0.0
+    return float(2 * prec * rec / (prec + rec + 1e-8))
+
+
+def _fuzzy_bf1(d_pred: np.ndarray, d_true: np.ndarray, sigma: float) -> float:
+    """Centre-weighted BF1: mean exp(-d² / 2σ²) on each surface, then F1."""
+    var = 2.0 * float(sigma) ** 2
+    p_soft = float(np.mean(np.exp(-(d_pred ** 2) / var))) if d_pred.size else 0.0
+    r_soft = float(np.mean(np.exp(-(d_true ** 2) / var))) if d_true.size else 0.0
+    return float(2 * p_soft * r_soft / (p_soft + r_soft + 1e-8))
+
+
+def surface_metrics(pred: np.ndarray, true: np.ndarray, tau: float = 2.0,
+                    taus_px: Optional[Sequence[float]] = None,
+                    sigma_px: Optional[float] = None,
+                    pixel_m: float = PIXEL_M) -> Dict:
     """Normalized Surface Dice at tolerance `tau` (px), HD95, and ASSD.
 
     NSD = fraction of both surfaces lying within `tau` pixels of the other
     surface — tolerant of fuzzy-boundary jitter within tau, unlike Dice.
+
+    Extra keys (additive; existing nsd/hd95/assd stay the same when both
+    surfaces exist):
+      nsd_curve, hd95_km, assd_km, bf1, bf1_fuzzy
+    Empty prediction on a non-empty true mask: nsd = 0 (no longer NaN, so
+    nanmean cannot drop total misses). hd95/assd stay NaN.
     """
-    out = {"nsd": float("nan"), "hd95": float("nan"), "assd": float("nan")}
+    out: Dict = {"nsd": float("nan"), "hd95": float("nan"), "assd": float("nan")}
+    scale_km = float(pixel_m) / 1000.0
+    taus = tuple(DEFAULT_NSD_TAUS_PX if taus_px is None else taus_px)
+    sigma = float(DEFAULT_BF1_SIGMA_PX if sigma_px is None else sigma_px)
+    out["nsd_curve"] = {
+        "taus_px": [float(t) for t in taus],
+        "taus_km": [float(t) * scale_km for t in taus],
+        "nsd": [float("nan")] * len(taus),
+    }
+    out["bf1"] = float("nan")
+    out["bf1_fuzzy"] = float("nan")
+    out["hd95_km"] = float("nan")
+    out["assd_km"] = float("nan")
+
+    p_any = bool(np.asarray(pred).any())
+    t_any = bool(np.asarray(true).any())
     res = _surface_distances(pred, true)
     if res is None:
-        # both empty -> perfect; one empty -> worst
-        both_empty = (not np.asarray(pred).any()) and (not np.asarray(true).any())
-        if both_empty:
-            out.update(nsd=1.0, hd95=0.0, assd=0.0)
+        if not p_any and not t_any:
+            out.update(nsd=1.0, hd95=0.0, assd=0.0, hd95_km=0.0, assd_km=0.0,
+                       bf1=1.0, bf1_fuzzy=1.0)
+            out["nsd_curve"]["nsd"] = [1.0] * len(taus)
+        else:
+            # One surface empty: a total miss (or unmatched hallucination).
+            out["nsd"] = 0.0
+            out["bf1"] = 0.0
+            out["bf1_fuzzy"] = 0.0
+            out["nsd_curve"]["nsd"] = [0.0] * len(taus)
         return out
-    d_pred, d_true = res  # d_pred: pred-surface -> true; d_true: true-surface -> pred
+    d_pred, d_true = res
     n = d_pred.size + d_true.size
     out["nsd"] = float(((d_pred <= tau).sum() + (d_true <= tau).sum()) / (n + 1e-8))
     alld = np.concatenate([d_pred, d_true])
     out["hd95"] = float(np.percentile(alld, 95))
     out["assd"] = float(alld.mean())
+    out["hd95_km"] = float(out["hd95"] * scale_km)
+    out["assd_km"] = float(out["assd"] * scale_km)
+    out["nsd_curve"]["nsd"] = [
+        float(((d_pred <= t).sum() + (d_true <= t).sum()) / (n + 1e-8)) for t in taus
+    ]
+    out["bf1"] = _bf1_from_distances(d_pred, d_true, tau)
+    out["bf1_fuzzy"] = _fuzzy_bf1(d_pred, d_true, sigma)
     return out

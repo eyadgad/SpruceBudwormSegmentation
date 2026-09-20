@@ -544,5 +544,84 @@ class NightBalancedSampling(unittest.TestCase):
         self.assertNotEqual(list(iter(a)), list(iter(b)))
 
 
+class PublicationMetrics(unittest.TestCase):
+    def test_empty_pred_on_positive_is_nsd_zero_not_nan(self):
+        from src.metrics import surface_metrics
+        true = np.zeros((32, 32), dtype=np.uint8)
+        true[8:16, 8:16] = 1
+        pred = np.zeros((32, 32), dtype=np.uint8)
+        m = surface_metrics(pred, true, tau=2.0)
+        self.assertEqual(m["nsd"], 0.0)
+        self.assertTrue(np.isnan(m["hd95"]))
+        self.assertTrue(np.isnan(m["assd"]))
+        self.assertEqual(m["nsd_curve"]["nsd"][0], 0.0)
+
+    def test_both_empty_is_perfect(self):
+        from src.metrics import surface_metrics
+        z = np.zeros((16, 16), dtype=np.uint8)
+        m = surface_metrics(z, z, tau=2.0)
+        self.assertEqual(m["nsd"], 1.0)
+        self.assertEqual(m["hd95"], 0.0)
+
+    def test_existing_nsd_unchanged_when_both_surfaces_exist(self):
+        from src.metrics import surface_metrics
+        true = np.zeros((32, 32), dtype=np.uint8)
+        pred = np.zeros((32, 32), dtype=np.uint8)
+        true[8:20, 8:20] = 1
+        pred[9:21, 9:21] = 1
+        m = surface_metrics(pred, true, tau=2.0)
+        self.assertGreater(m["nsd"], 0.5)
+        self.assertTrue(np.isfinite(m["hd95"]))
+        self.assertIn("bf1_fuzzy", m)
+
+    def test_cluster_bootstrap_shared_draws(self):
+        from src.stats import cluster_bootstrap_many
+        rec = [{"dice": 0.5, "iou": 0.4, "night": "a"},
+               {"dice": 0.7, "iou": 0.6, "night": "a"},
+               {"dice": 0.2, "iou": 0.1, "night": "b"}]
+        out = cluster_bootstrap_many(rec, [r["night"] for r in rec],
+                                     ["dice", "iou"], n_boot=50, seed=0)
+        self.assertIn("lo", out["dice"])
+        self.assertEqual(out["dice"]["n_nights"], 2)
+
+    def test_night_config_gate_off_and_balanced(self):
+        from src import config as cfgmod
+        cfg = cfgmod.load_base_config(ROOT / "configs" / "base_config_night.yaml")
+        self.assertIn(str(cfg["eval"].get("gate", "off")), ("off", "", "None"))
+        self.assertTrue(cfg["negatives"]["balanced"])
+        self.assertEqual(float(cfg["negatives"]["ratio"]), 1.0)
+        self.assertAlmostEqual(float(cfg["eval"]["cls_r_min"]), 0.98)
+        self.assertLess(min(cfg["eval"]["cls_threshold_range"]), 1e-5)
+
+    def test_seed_experiments_load(self):
+        from src import config as cfgmod
+        base = cfgmod.load_base_config(ROOT / "configs" / "base_config_night.yaml")
+        exps = cfgmod.load_experiments(ROOT / "configs" / "experiments_night_seeds.yaml")
+        names = [e["name"] for e in exps]
+        self.assertEqual(len(names), 8)
+        cfg = cfgmod.resolve_experiment(base, exps[0])
+        self.assertEqual(cfg["train"]["seed"], 42)
+        self.assertEqual(cfg["split"]["seed"], 42)
+        self.assertEqual(cfg["eval"].get("gate"), "off")
+
+    def test_calibrate_cls_uses_sensitivity_floor(self):
+        from src.engine import calibrate_cls_threshold, metrics_from_cache
+        rng = np.random.default_rng(0)
+        items = []
+        for i in range(40):
+            label = 1 if i < 20 else 0
+            y = np.zeros((8, 8), np.float32)
+            if label:
+                y[:4, :4] = 1
+            p_cls = 0.9 if label else 1e-6
+            if i == 0:
+                p_cls = 1e-7  # one hard positive
+            items.append({"label": label, "y": y, "prob": y * 0.8 + 0.1,
+                          "p_cls": p_cls, "ts": i, "night": str(i // 5)})
+        t = calibrate_cls_threshold(items, 0.5, [1e-6, 1e-4, 0.5, 0.9], r_min=0.9)
+        m = metrics_from_cache(items, 0.5, t, gate="hard")
+        self.assertGreaterEqual(m["scan_recall"], 0.9)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

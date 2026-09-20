@@ -229,17 +229,24 @@ def evaluate(seg_base: str, seg_exps: str, seg_name: str,
         for it, p in zip(items, probs):
             it["p_cls"] = float(p)
         youden_t = float(cls_res["val"]["threshold"])
-        dice_t = engine.calibrate_cls_threshold(
-            items, seg_t, cls_cfg["eval"].get("threshold_range",
-                                              [i / 10 for i in range(2, 10)]))
+        r_min = float(cls_cfg["eval"].get("cls_r_min", engine.DEFAULT_R_MIN))
+        rmin_t = engine.calibrate_cls_threshold(
+            items, seg_t,
+            cls_cfg["eval"].get("cls_threshold_range")
+            or cls_cfg["eval"].get("threshold_range")
+            or engine.default_cls_threshold_grid(),
+            r_min=r_min)
         rows.append(_row(f"cascade_{cls_name}+{seg_name}_youden", "cascade",
-                         engine.metrics_from_cache(items, seg_t, youden_t, gate="hard"),
+                         engine.metrics_from_cache(items, seg_t, youden_t,
+                                                   gate="hard", cfg=seg_cfg),
                          extra={"note": "cls cutoff = Youden J"}))
-        rows.append(_row(f"cascade_{cls_name}+{seg_name}_dice", "cascade",
-                         engine.metrics_from_cache(items, seg_t, dice_t, gate="hard"),
-                         extra={"note": "cls cutoff max val Dice"}))
+        rows.append(_row(f"cascade_{cls_name}+{seg_name}_rmin", "cascade",
+                         engine.metrics_from_cache(items, seg_t, rmin_t,
+                                                   gate="hard", cfg=seg_cfg),
+                         extra={"note": f"cls cutoff = max specificity at scan "
+                                        f"sensitivity >= {r_min:g}"}))
         # Classifier-only row (scan metrics; pixel maps unused).
-        cm = engine.metrics_from_cache(items, seg_t, youden_t, gate="hard")
+        cm = engine.metrics_from_cache(items, seg_t, youden_t, gate="hard", cfg=seg_cfg)
         rows.append(_row(cls_name, "classifier", cm,
                          extra={"note": "scan metrics; pixel maps are gated S0"}))
 

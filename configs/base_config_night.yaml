@@ -96,8 +96,18 @@ eval:
   gaussian_window: true
   boundary_metrics: true
   nsd_tolerance: 2.0
+  nsd_taus_px: [1, 2, 3, 4, 6, 8, 10, 14, 20]
+  bf1_sigma_px: 2.0
+  far_min_area_km2: 25.0   # starting hypothesis; freeze A after train-split GT areas
+  bootstrap: true
   threshold_range: [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
+  # Classifier is bimodal; the useful gate is ~1e-6 to 1e-4, not 0.2–0.9.
+  cls_threshold_range: [1.0e-6, 2.2e-6, 4.6e-6, 1.0e-5, 2.2e-5, 4.6e-5, 1.0e-4, 2.2e-4, 4.6e-4, 1.0e-3, 2.2e-3, 4.6e-3, 1.0e-2, 2.2e-2, 4.6e-2, 1.0e-1, 2.2e-1, 4.6e-1, 9.0e-1]
+  cls_r_min: 0.98
   calib_max_scenes: 50
+  # Keep gate off so finalize (predict_gated) and export_variant_comparison
+  # (sliding_window_predict) produce the same Dice.
+  gate: "off"
   # Hold the test set back until every architecture/lambda/threshold decision is
   # frozen. Training runs then report val_full_scene only; `python -m src.finalize`
   # produces test numbers in one deliberate pass.
@@ -114,6 +124,15 @@ loss:
   gamma: 1.333
 
 output_dir: "outputs/night_split"
+
+# Remote mirror for checkpoints/logs/results + the frozen manifest.
+# The TOKEN IS NEVER STORED HERE. Export HF_TOKEN, or put it in a gitignored
+# .env (see .env.example). With no token the run proceeds local-only.
+sync:
+  enabled: true
+  repo_id: "eyadgad/budworm-checkpoints"
+  every_epochs: 50       # push resume+best+logs on this cadence and at the end
+  push_resume: true      # the ~95 MB full state; disable to mirror weights only
 
 data_prep:
   norm_max_scenes: 200

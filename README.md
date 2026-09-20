@@ -53,6 +53,65 @@ Other entry points (also via the venv python):
 Outputs land in `outputs/`: `checkpoints/`, per-experiment `experiments/*_result.json`
 and `*_history.csv`, and `comparison_table.{csv,md}`.
 
+## Checkpoint mirror and resuming across machines
+
+Code lives in git; weights, logs, results and the **frozen manifest** are mirrored to a
+private Hugging Face dataset (`configs/base_config_night.yaml` -> `sync:`). Together they
+make a run portable.
+
+### Set the token (never commit it)
+
+```bat
+setx HF_TOKEN hf_xxxxxxxxxxxxxxxxxxxx     :: persistent, Windows
+:: or, for this shell only:
+set HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+:: or copy .env.example to .env and put it there (.env is gitignored)
+```
+
+Create a **write** token at <https://huggingface.co/settings/tokens>. With no token the
+run proceeds local-only — syncing is skipped, training is unaffected. A token must never
+appear in a tracked file: this repo is public, and a leaked write token lets anyone
+overwrite the checkpoints (and the platform revokes it, usually mid-run).
+
+### Power loss / crash
+
+Just re-run the same command:
+
+```bat
+run.bat
+```
+
+`src.run` skips finished experiments and resumes the interrupted one from its last
+snapshot (written every epoch). If the local snapshot is gone, it is pulled from the
+mirror first. At most one epoch is lost.
+
+### Moving to another machine
+
+```bat
+git clone https://github.com/eyadgad/SpruceBudwormSegmentation
+cd SpruceBudwormSegmentation
+python -m venv .venv && .venv\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+set HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+:: put the radar archive at Data\  (not distributed via git)
+run.bat
+```
+
+The frozen `artifacts_night/` (manifest, norm stats, split summary) is **pulled before**
+any attempt to rebuild it, then every finished run is pulled so the sweep continues
+instead of restarting. The manifest sha256 is printed at startup — it must match the one
+recorded in `FROZEN.md`.
+
+> Never let `data_prep` regenerate the manifest on a second machine. Negatives are sampled
+> *before* the night->split assignment, so a single missing `.nc` file reshuffles which
+> nights land in val/test — silently producing a different experiment. Restoring the
+> mirrored manifest is what keeps the split frozen.
+
+Cadence is `sync.every_epochs` (default 50): resume state, best/final weights, result
+JSON, history CSV and the training log are pushed on that cadence, on the final epoch,
+and once more on clean completion.
+
 ## Export the evaluation dashboard
 
 The static dashboard is expected in the sibling

@@ -14,6 +14,7 @@ import os
 # the memory fragmentation that OOMs long training runs on limited VRAM.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+import json
 import random
 import time
 from typing import Dict
@@ -24,7 +25,7 @@ from torch.utils.data import DataLoader
 
 from . import checkpoint as ckpt
 from . import config as cfgmod
-from . import engine, logutil, paths
+from . import engine, logutil, paths, sync
 from .dataset import NightBalancedSceneSampler, RadarPatchDataset, SceneGroupedSampler
 from .losses import UncertaintyWeightedLoss, create_loss
 from .models import create_model, count_params
@@ -125,7 +126,11 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
     no_improve, training_complete = 0, False
     history = []
 
-    # 2) Resume if a snapshot exists.
+    # 2) Resume if a snapshot exists. Pull first: on a fresh machine (or after
+    # the local disk was lost) the only snapshot is the remote mirror.
+    syncer = sync.RunSync(cfg, name, ckpt_dir, exp_dir, logger=log)
+    if syncer.enabled and not ckpt.resume_path(ckpt_dir, name).exists():
+        syncer.pull()
     state = ckpt.load_checkpoint(ckpt.resume_path(ckpt_dir, name), device)
     if state is not None:
         model.load_state_dict(state["model"])
@@ -191,6 +196,10 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
             if (epoch + 1) % snap_every == 0 or epoch == epochs - 1:
                 _save_resume(ckpt_dir, name, model, optimizer, scheduler, scaler,
                              epoch + 1, best_dice, best_epoch, no_improve, False, history, cfg)
+                # Mirror AFTER the local snapshot, so the remote never holds a
+                # state the local disk does not.
+                _save_history_csv(exp_dir, name, history)
+                syncer.maybe_push(epoch + 1, epochs)
 
             if no_improve >= patience:
                 log.info(f"early stop at epoch {epoch + 1} (no val-dice improvement for "
@@ -237,24 +246,40 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
     gate = str(cfg.get("eval", {}).get("gate", "off"))
     if defer_test and hasattr(model, "classify") and gate == "hard":
         cache = engine.collect_scene_cache(model, val_rows, cfg, norm_stats, device, tta=tta)
-        cls_grid = cfg["eval"].get("cls_threshold_range",
-                                   [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
-        cls_t = engine.calibrate_cls_threshold(cache, best_t, cls_grid)
+        cls_grid = cfg["eval"].get("cls_threshold_range") or engine.default_cls_threshold_grid()
+        r_min = float(cfg["eval"].get("cls_r_min", engine.DEFAULT_R_MIN))
+        cls_t = engine.calibrate_cls_threshold(cache, best_t, cls_grid, r_min=r_min)
         result["calibrated_cls_threshold"] = float(cls_t)
         result["val_full_scene"] = engine.metrics_from_cache(
-            cache, best_t, cls_t, gate="hard")
+            cache, best_t, cls_t, gate="hard", cfg=cfg)
         result["val_ungated"] = engine.metrics_from_cache(
-            cache, best_t, 0.0, gate="off")
+            cache, best_t, 0.0, gate="off", cfg=cfg)
     elif defer_test:
         result["val_full_scene"] = engine.evaluate_full_scene(
             model, val_rows, cfg, norm_stats, device, threshold=best_t, tta=tta)
     else:
         result["test_full_scene"] = engine.evaluate_full_scene(
             model, test_rows, cfg, norm_stats, device, threshold=best_t, tta=tta)
+
+    # Per-scene records live beside the result, not inside it: each block holds
+    # one row per scan (with an NSD curve), which would otherwise add ~1 MB of
+    # noise to every result JSON that src.run and src.cascade parse.
+    for block, tag in (("val_full_scene", "val"), ("val_ungated", "val_ungated"),
+                       ("test_full_scene", "test")):
+        metrics = result.get(block)
+        if not isinstance(metrics, dict):
+            continue
+        per_scene = metrics.pop("per_scene", None)
+        if per_scene:
+            with open(exp_dir / f"{name}_{tag}_per_scene.json", "w", encoding="utf-8") as f:
+                json.dump(per_scene, f, indent=2, default=str)
     ckpt.save_result(exp_dir, name, result)
     _save_history_csv(exp_dir, name, history)
 
-    # 5) Clean completion -> drop the resume snapshot.
+    # 5) Clean completion -> mirror the finished run, then drop the resume
+    # snapshot. Push before unlinking so an interrupted upload still leaves a
+    # resumable state on both sides.
+    syncer.push(tag="complete", include_resume=False)
     rp = ckpt.resume_path(ckpt_dir, name)
     if rp.exists():
         rp.unlink()

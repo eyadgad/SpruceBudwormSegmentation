@@ -16,3 +16,5 @@ pyyaml>=6.0
 tqdm>=4.66
 segmentation-models-pytorch>=0.4   # U-Net++, DeepLabV3+, SegFormer
 tabulate>=0.9                       # pandas.to_markdown for the comparison table
+huggingface-hub>=0.23               # checkpoint/log mirror (src/sync.py)
+timm>=1.0                           # Swin-Tiny / ConvNeXt scan classifiers

@@ -133,7 +133,18 @@ def run_all(base_config_path: str, experiments_path: str, verbose=True, fresh=Fa
     experiments = cfgmod.load_experiments(experiments_path)
     if fresh:
         clean_run(base_cfg, verbose=verbose)
+    # MUST precede ensure_artifacts: that call rebuilds the manifest when it is
+    # missing, and a rebuild is not equivalent to the frozen split (negatives are
+    # sampled before the night->split assignment, so any difference in Data/
+    # reshuffles val/test). Restore the frozen manifest first; only build one if
+    # the mirror has none.
+    from . import sync
+    sync.pull_artifacts(base_cfg)
     ensure_artifacts(base_cfg, verbose=verbose)  # runs data prep in-parent if needed
+    if verbose:
+        fp = sync.manifest_fingerprint(base_cfg)
+        if fp:
+            print(f"[manifest] sha256={fp[:16]}…  (record this in FROZEN.md)")
 
     if verbose and torch.cuda.is_available():
         print(f"[device] cuda ({torch.cuda.get_device_name(0)})")
@@ -150,8 +161,15 @@ def run_all(base_config_path: str, experiments_path: str, verbose=True, fresh=Fa
     env = dict(os.environ)
     env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+    # A fresh machine has no outputs/ at all. Pull each finished/interrupted run
+    # BEFORE deciding what to skip, so "clone + Data/ + rerun the same command"
+    # continues rather than restarts. (Artifacts were pulled above.)
+    ckpt_dir = paths.checkpoint_dir(base_cfg)
+
     for exp in experiments:
         name = exp["name"]
+        if not ckpt.is_done(exp_dir, name):
+            sync.pull_run(base_cfg, name, ckpt_dir, exp_dir)
         if ckpt.is_done(exp_dir, name):
             if verbose:
                 print(f"[skip] {name}: result exists")

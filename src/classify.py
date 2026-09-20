@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from . import channels, checkpoint as ckpt, config as cfgmod, data_prep, engine, logutil, paths
+from . import channels, checkpoint as ckpt, config as cfgmod, data_prep, engine, logutil, paths, sync
 from .experiment import seed_everything
 from .models import count_params, create_model
 from .presence import classification_metrics, roc_analysis
@@ -159,6 +159,11 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
     patience = int(cfg["train"].get("patience", 15))
     start_epoch, best_auc, best_epoch, no_improve = 0, -1.0, -1, 0
     history: List[Dict] = []
+    # Same mirror contract as src.experiment: on a fresh machine the only
+    # snapshot is the remote one, so pull before deciding where to resume.
+    syncer = sync.RunSync(cfg, name, ckpt_dir, exp_dir, logger=log)
+    if syncer.enabled and not ckpt.resume_path(ckpt_dir, name).exists():
+        syncer.pull()
     state = ckpt.load_checkpoint(ckpt.resume_path(ckpt_dir, name), device)
     if state is not None:
         model.load_state_dict(state["model"])
@@ -209,6 +214,7 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
                      f"{time.time() - t0:5.0f}s")
             _save_resume(ckpt_dir, name, model, optimizer, scheduler, epoch + 1,
                          best_auc, best_epoch, no_improve, False, history, cfg)
+            syncer.maybe_push(epoch + 1, epochs)
             if no_improve >= patience:
                 log.info(f"early stop at epoch {epoch + 1} (no val AUROC gain for {patience} epochs)")
                 break
@@ -248,6 +254,7 @@ def run_experiment(cfg: Dict, manifest, norm_stats, device, verbose=True) -> Dic
     import pandas as pd
     if history:
         pd.DataFrame(history).to_csv(exp_dir / f"{name}_history.csv", index=False)
+    syncer.push(tag="complete", include_resume=False)
     rp = ckpt.resume_path(ckpt_dir, name)
     if rp.exists():
         rp.unlink()

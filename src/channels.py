@@ -22,9 +22,12 @@ import numpy as np
 import netCDF4 as nc
 
 from . import paths
+from .metrics import PIXEL_M
 
 IMG_SIZE = 960
 VALID_MASK_ELEV = 0  # elevation index used to define the valid-pixel mask
+GRID = {"h": IMG_SIZE, "w": IMG_SIZE, "pixel_m": PIXEL_M,
+        "radar": "XAM Val d'Irene, Quebec"}
 
 # Statistical-summary channels: a per-pixel nan-aware max / median / mean over
 # the lowest six TH elevations (0..5). NaN (no echo at a tilt) is ignored; a

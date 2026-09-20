@@ -18,8 +18,11 @@ from torch.utils.data import DataLoader
 
 from . import channels, dataset
 from . import metrics as metrics_mod
-from .metrics import compute_metrics
+from .metrics import PIXEL_AREA_KM2, compute_metrics, km2_to_cells
 from .models import seg_logits
+
+FAR_AREA_KM2 = (1, 5, 10, 25, 50, 100, 250)
+DEFAULT_R_MIN = 0.98
 
 IMG_SIZE = channels.IMG_SIZE
 
@@ -396,6 +399,36 @@ def calibrate_threshold(model, rows: List[dict], cfg, norm_stats, device,
     return best_t
 
 
+def _far_cell_counts(cfg):
+    a_km2 = float(cfg.get("eval", {}).get("far_min_area_km2", 25.0))
+    a_cells = max(1, int(round(km2_to_cells(a_km2))))
+    curve = [max(1, int(round(km2_to_cells(a)))) for a in FAR_AREA_KM2]
+    return a_km2, a_cells, curve
+
+
+def _surface_kwargs(cfg) -> dict:
+    ev = cfg.get("eval", {})
+    taus = ev.get("nsd_taus_px")
+    return {
+        "tau": float(ev.get("nsd_tolerance", 2.0)),
+        "taus_px": list(taus) if taus is not None else None,
+        "sigma_px": float(ev.get("bf1_sigma_px", 2.0)),
+    }
+
+
+def _mean_nsd_curve(pos_metrics: List[dict]) -> Optional[dict]:
+    curves = [m.get("nsd_curve") for m in pos_metrics if m.get("nsd_curve")]
+    if not curves:
+        return None
+    taus_px = curves[0]["taus_px"]
+    mat = np.asarray([c["nsd"] for c in curves], dtype=np.float64)
+    return {
+        "taus_px": taus_px,
+        "taus_km": curves[0]["taus_km"],
+        "nsd": [float(x) for x in np.nanmean(mat, axis=0)],
+    }
+
+
 def evaluate_full_scene(model, rows: List[dict], cfg, norm_stats, device,
                         threshold, tta=True) -> Dict[str, float]:
     """Full-scene evaluation on held-out scenes at a fixed threshold.
@@ -405,18 +438,25 @@ def evaluate_full_scene(model, rows: List[dict], cfg, norm_stats, device,
       * MACRO (``dice`` etc.): mean of per-scene metrics. Every scene counts
         equally, so sparse/hard plumes pull it down. This matches the notebook's
         reported full-scene test number and is the headline metric.
-      * MICRO (``dice_micro`` etc.): pixel-pooled across all scenes. Dominated by
-        dense plumes; matches the patch-level ``val_dice`` reported per epoch.
-    For NEGATIVE (all-background) scenes we report ``bg_fp_rate`` = mean fraction
-    of pixels wrongly predicted positive.
+      * MICRO (``dice_micro`` etc.): pixel-pooled across **positive** scenes.
+        Dominated by dense plumes; matches the patch-level ``val_dice``.
+    ``dice_global`` / ``iou_global`` pool over **all** scans (quiet scans
+    contribute FP only). ``bg_fp_rate`` is the mean false-positive pixel
+    fraction on negative scenes.
     """
     ps = int(cfg["patch"]["size"])
     ov = float(cfg["eval"].get("overlap", cfg["eval"].get("sliding_overlap", 0.5)))
     gaussian = bool(cfg["eval"].get("gaussian_window", True))
-    tau = float(cfg["eval"].get("nsd_tolerance", 2.0))
     boundary = bool(cfg["eval"].get("boundary_metrics", True))
+    surf_kw = _surface_kwargs(cfg)
+    a_km2, a_cells, far_curve_cells = _far_cell_counts(cfg)
     pos_metrics, bg_fp = [], []
     TP = FP = FN = TN = 0.0
+    TP_all = FP_all = FN_all = 0.0
+    n_far = 0
+    n_sens = 0
+    far_hits = [0] * len(far_curve_cells)
+    per_scene: List[dict] = []
     load = scene_loader(cfg, rows, norm_stats)
     for i, row in enumerate(rows):
         x, y, pad = load(i)
@@ -425,20 +465,46 @@ def evaluate_full_scene(model, rows: List[dict], cfg, norm_stats, device,
         prob = predict_gated(model, x, device, ps, ov, tta, gaussian=gaussian,
                              pad_mask=pad, gate=gate, cls_threshold=cls_t)
         pred = prob > threshold
+        p = pred.reshape(-1).astype(np.float64)
+        t = y.reshape(-1).astype(np.float64)
+        tp = float((p * t).sum()); fp = float((p * (1 - t)).sum())
+        fn = float(((1 - p) * t).sum()); tn = float(((1 - p) * (1 - t)).sum())
+        TP_all += tp; FP_all += fp; FN_all += fn
+        pred_area = int(pred.sum())
+        rec = {
+            "ts": int(row.get("timestamp", 0)),
+            "night": str(row.get("night", "")),
+            "label": int(row["label"]),
+            "gt_area": int(y.astype(bool).sum()),
+            "pred_area": pred_area,
+            "p_cls": None,
+        }
+        if pred_area >= a_cells and int(row["label"]) == 0:
+            n_far += 1
+        if int(row["label"]) == 0:
+            for k, c in enumerate(far_curve_cells):
+                if pred_area >= c:
+                    far_hits[k] += 1
         if int(row["label"]) == 1:
             m = compute_metrics(pred, y)
             if boundary:
                 m["boundary_iou"] = metrics_mod.boundary_iou(pred, y)
-                m.update(metrics_mod.surface_metrics(pred, y, tau=tau))
+                m.update(metrics_mod.surface_metrics(pred, y, **surf_kw))
             pos_metrics.append(m)
-            p = pred.reshape(-1).astype(np.float64); t = y.reshape(-1).astype(np.float64)
-            TP += float((p * t).sum()); FP += float((p * (1 - t)).sum())
-            FN += float(((1 - p) * t).sum()); TN += float(((1 - p) * (1 - t)).sum())
+            rec.update({k: m.get(k) for k in
+                        ("dice", "iou", "precision", "recall", "f1", "accuracy",
+                         "boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy",
+                         "nsd_curve")})
+            TP += tp; FP += fp; FN += fn; TN += tn
+            if pred_area >= a_cells:
+                n_sens += 1
         else:
             bg_fp.append(float(pred.mean()))
+            rec["bg_fp_rate"] = float(pred.mean())
+        per_scene.append(rec)
     keys = ["dice", "iou", "precision", "recall", "f1", "accuracy"]
     if boundary:
-        keys += ["boundary_iou", "nsd", "hd95", "assd"]
+        keys += ["boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy"]
     out = {k: (float(np.nanmean([m[k] for m in pos_metrics])) if pos_metrics else float("nan"))
            for k in keys}
     eps = 1e-8
@@ -446,10 +512,38 @@ def evaluate_full_scene(model, rows: List[dict], cfg, norm_stats, device,
     out["iou_micro"] = TP / (TP + FP + FN + eps)
     out["precision_micro"] = TP / (TP + FP + eps)
     out["recall_micro"] = TP / (TP + FN + eps)
+    out["dice_global"] = 2 * TP_all / (2 * TP_all + FP_all + FN_all + eps)
+    out["iou_global"] = TP_all / (TP_all + FP_all + FN_all + eps)
     out["n_pos_scenes"] = len(pos_metrics)
     out["n_neg_scenes"] = len(bg_fp)
+    out["n_valid"] = int(sum(1 for m in pos_metrics if m.get("hd95") == m.get("hd95")))
     out["bg_fp_rate"] = float(np.mean(bg_fp)) if bg_fp else float("nan")
     out["threshold"] = float(threshold)
+    out["far_min_area_km2"] = a_km2
+    out["far_scan"] = (n_far / len(bg_fp)) if bg_fp else float("nan")
+    out["sensitivity_retained"] = (n_sens / len(pos_metrics)) if pos_metrics else float("nan")
+    out["far_curve"] = {
+        "area_km2": list(FAR_AREA_KM2),
+        "far_scan": [(far_hits[k] / len(bg_fp)) if bg_fp else float("nan")
+                     for k in range(len(far_curve_cells))],
+    }
+    curve = _mean_nsd_curve(pos_metrics)
+    if curve is not None:
+        out["nsd_curve"] = curve
+    out["per_scene"] = per_scene
+    if bool(cfg.get("eval", {}).get("bootstrap", True)) and pos_metrics:
+        from .stats import cluster_bootstrap_many, cluster_bootstrap_curve, median_iqr
+        pos_rec = [r for r in per_scene if r["label"] == 1]
+        nights = [r["night"] for r in pos_rec]
+        boot_keys = ["dice", "iou", "precision", "recall", "nsd", "bf1", "bf1_fuzzy"]
+        out["bootstrap"] = cluster_bootstrap_many(pos_rec, nights, boot_keys)
+        out["hd95_iqr"] = median_iqr([r.get("hd95") for r in pos_rec])
+        curve_rows = [(r["nsd_curve"]["nsd"], r["night"])
+                      for r in pos_rec if r.get("nsd_curve")]
+        if curve_rows:
+            nsd_mat = [c for c, _ in curve_rows]
+            out["nsd_curve_bootstrap"] = cluster_bootstrap_curve(
+                nsd_mat, [n for _, n in curve_rows])
     return out
 
 
@@ -472,17 +566,28 @@ def collect_scene_cache(model, rows, cfg, norm_stats, device, tta=False):
             "y": y,
             "prob": prob,
             "p_cls": float(p_cls),
+            "ts": int(row.get("timestamp", 0)),
+            "night": str(row.get("night", "")),
         })
     return items
 
 
 def metrics_from_cache(items, seg_threshold: float, cls_threshold: float = 0.0,
-                       gate: str = "off") -> Dict[str, float]:
+                       gate: str = "off", cfg: Optional[dict] = None) -> Dict[str, float]:
     """Pixel + scan metrics from a cached SW pass, with optional hard/soft gate."""
-    from .presence import classification_metrics as _cm, roc_analysis
+    from .presence import classification_metrics as _cm, pr_analysis, roc_analysis
+    cfg = cfg or {}
+    surf_kw = _surface_kwargs(cfg) if cfg else {"tau": 2.0}
+    a_km2, a_cells, far_curve_cells = _far_cell_counts(cfg)
+    boundary = bool(cfg.get("eval", {}).get("boundary_metrics", False))
     pos_metrics, bg_fp = [], []
     TP = FP = FN = 0.0
-    scan_truth, scan_score, scan_pred = [], [], []
+    TP_all = FP_all = FN_all = 0.0
+    n_far = 0
+    n_sens = 0
+    far_hits = [0] * len(far_curve_cells)
+    scan_truth, scan_score = [], []
+    per_scene: List[dict] = []
     for it in items:
         prob = it["prob"]
         p_cls = it["p_cls"]
@@ -492,42 +597,105 @@ def metrics_from_cache(items, seg_threshold: float, cls_threshold: float = 0.0,
             prob = np.zeros_like(prob)
         pred = prob > seg_threshold
         y = it["y"]
+        p = pred.reshape(-1).astype(np.float64)
+        t = y.reshape(-1).astype(np.float64)
+        tp = float((p * t).sum()); fp = float((p * (1 - t)).sum())
+        fn = float(((1 - p) * t).sum())
+        TP_all += tp; FP_all += fp; FN_all += fn
+        pred_area = int(pred.sum())
         scan_truth.append(it["label"])
         scan_score.append(p_cls)
-        scan_pred.append(int(pred.any()))
+        rec = {
+            "ts": int(it.get("ts", 0)),
+            "night": str(it.get("night", "")),
+            "label": int(it["label"]),
+            "gt_area": int(y.astype(bool).sum()),
+            "pred_area": pred_area,
+            "p_cls": float(p_cls),
+        }
+        if it["label"] == 0 and pred_area >= a_cells:
+            n_far += 1
+        if it["label"] == 0:
+            for k, c in enumerate(far_curve_cells):
+                if pred_area >= c:
+                    far_hits[k] += 1
         if it["label"] == 1:
-            pos_metrics.append(compute_metrics(pred, y))
-            p = pred.reshape(-1).astype(np.float64)
-            t = y.reshape(-1).astype(np.float64)
-            TP += float((p * t).sum())
-            FP += float((p * (1 - t)).sum())
-            FN += float(((1 - p) * t).sum())
+            m = compute_metrics(pred, y)
+            if boundary:
+                m["boundary_iou"] = metrics_mod.boundary_iou(pred, y)
+                m.update(metrics_mod.surface_metrics(pred, y, **surf_kw))
+            pos_metrics.append(m)
+            rec.update({k: m.get(k) for k in
+                        ("dice", "iou", "precision", "recall", "nsd", "hd95", "assd")})
+            TP += tp; FP += fp; FN += fn
+            if pred_area >= a_cells:
+                n_sens += 1
         else:
             bg_fp.append(float(pred.mean()))
+        per_scene.append(rec)
     eps = 1e-8
     out = {k: float(np.nanmean([m[k] for m in pos_metrics])) if pos_metrics else float("nan")
            for k in ("dice", "iou", "precision", "recall", "f1", "accuracy")}
     out["dice_micro"] = 2 * TP / (2 * TP + FP + FN + eps)
+    out["dice_global"] = 2 * TP_all / (2 * TP_all + FP_all + FN_all + eps)
+    out["iou_global"] = TP_all / (TP_all + FP_all + FN_all + eps)
     out["n_pos_scenes"] = len(pos_metrics)
     out["n_neg_scenes"] = len(bg_fp)
+    out["n_valid"] = int(sum(1 for m in pos_metrics if m.get("hd95") == m.get("hd95")))
     out["bg_fp_rate"] = float(np.mean(bg_fp)) if bg_fp else float("nan")
     out["threshold"] = float(seg_threshold)
     out["cls_threshold"] = float(cls_threshold)
     out["gate"] = gate
+    out["far_min_area_km2"] = a_km2
+    out["far_scan"] = (n_far / len(bg_fp)) if bg_fp else float("nan")
+    out["sensitivity_retained"] = (n_sens / len(pos_metrics)) if pos_metrics else float("nan")
+    out["far_curve"] = {
+        "area_km2": list(FAR_AREA_KM2),
+        "far_scan": [(far_hits[k] / len(bg_fp)) if bg_fp else float("nan")
+                     for k in range(len(far_curve_cells))],
+    }
     cm = _cm(scan_truth, scan_score, cls_threshold if gate == "hard" else 0.5)
     out["scan_auroc"] = float(roc_analysis(scan_truth, scan_score).get("auc") or float("nan"))
+    pr = pr_analysis(scan_truth, scan_score)
+    out["scan_auprc"] = pr.get("ap")
+    out["scan_auprc_baseline"] = pr.get("baseline_precision")
     out["scan_f1"] = cm.get("f1")
     out["scan_precision"] = cm.get("precision")
     out["scan_recall"] = cm.get("recall")
+    out["scan_specificity"] = cm.get("specificity")
     out["scan_accuracy"] = cm.get("accuracy")
+    out["per_scene"] = per_scene
     return out
 
 
-def calibrate_cls_threshold(items, seg_threshold: float, grid) -> float:
-    """Pick the hard-gate scan cutoff that maximizes val macro Dice."""
-    best_t, best_d = 0.5, -1.0
+def default_cls_threshold_grid() -> List[float]:
+    return [float(x) for x in np.geomspace(1e-6, 0.9, 20)]
+
+
+def calibrate_cls_threshold(items, seg_threshold: float, grid,
+                            r_min: float = DEFAULT_R_MIN) -> float:
+    """Highest-specificity hard-gate cutoff with scan sensitivity ≥ ``r_min``.
+
+    Macro Dice is invariant to a perfect presence gate (Finding 1), so it must
+    not be the objective. If no cutoff meets ``r_min``, fall back to the
+    highest-recall point (then highest specificity, then higher t).
+    """
+    grid = list(grid) if grid is not None else default_cls_threshold_grid()
+    best = None  # (spec, t)
+    fallback = None  # (rec, spec, t)
     for t in grid:
-        d = metrics_from_cache(items, seg_threshold, float(t), gate="hard")["dice"]
-        if d == d and d > best_d:
-            best_d, best_t = d, float(t)
-    return best_t
+        m = metrics_from_cache(items, seg_threshold, float(t), gate="hard")
+        rec = m.get("scan_recall")
+        spec = m.get("scan_specificity")
+        rec_f = -1.0 if rec is None else float(rec)
+        spec_f = -1.0 if spec is None else float(spec)
+        cand = (rec_f, spec_f, float(t))
+        if fallback is None or cand > fallback:
+            fallback = cand
+        if rec_f >= float(r_min):
+            key = (spec_f, float(t))
+            if best is None or key > best:
+                best = key
+    if best is not None:
+        return float(best[1])
+    return float(fallback[2]) if fallback is not None else 0.0

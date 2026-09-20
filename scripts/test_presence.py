@@ -17,11 +17,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import export_dashboard_data as export  # noqa: E402
 
 from src.presence import (  # noqa: E402
+    SCHEMA_VERSION,
     analyze_presence,
     classification_metrics,
     mann_whitney_analysis,
     operational_night_id,
+    pr_analysis,
     roc_analysis,
+    select_high_sensitivity_cutoff,
     select_youden_cutoff,
 )
 
@@ -58,6 +61,36 @@ def _fixture_documents():
 
 
 class PresenceCoreTests(unittest.TestCase):
+    def test_pr_analysis_step_ap_and_baseline(self):
+        # Perfect ranking of 2 pos / 2 neg: AP = 1, baseline = 0.5
+        got = pr_analysis([1, 1, 0, 0], [0.9, 0.8, 0.2, 0.1])
+        self.assertAlmostEqual(got["ap"], 1.0)
+        self.assertAlmostEqual(got["baseline_precision"], 0.5)
+        self.assertEqual(len(got["points"]), 101)
+        self.assertEqual(got["points"][0]["recall"], 0.0)
+        self.assertEqual(got["points"][-1]["recall"], 1.0)
+
+    def test_analyze_presence_schema_and_score_field(self):
+        samples, dataset = _fixture_documents()
+        doc = analyze_presence(samples, dataset, generated="fixture")
+        self.assertEqual(doc["schema_version"], SCHEMA_VERSION)
+        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertIn("pr", doc["models"][0]["scan"]["splits"]["validation"])
+        self.assertIn("high_sensitivity",
+                      doc["models"][0]["scan"]["splits"]["validation"]["operating_points"])
+        for s in samples["samples"]:
+            s["models"]["m"]["p_cls"] = 0.99 if s["gt_area"] else 0.01
+        pcls = analyze_presence(samples, dataset, generated="fixture", score_field="p_cls")
+        self.assertEqual(pcls["definitions"]["score_field"], "p_cls")
+        self.assertNotIn("any_cell",
+                         pcls["models"][0]["scan"]["splits"]["validation"]["operating_points"])
+
+    def test_high_sensitivity_cutoff_respects_r_min(self):
+        # Scores well separated; r_min=1.0 should pick a cutoff that keeps all positives.
+        got = select_high_sensitivity_cutoff([1, 1, 0, 0], [0.9, 0.8, 0.1, 0.05], r_min=1.0)
+        self.assertGreaterEqual(got["validation_sensitivity"], 1.0)
+        self.assertTrue(got["met_constraint"])
+
     def test_operational_night_noon_boundaries_and_rollovers(self):
         self.assertEqual(operational_night_id(201307122330), "2013-07-12")
         self.assertEqual(operational_night_id(201307130000), "2013-07-12")

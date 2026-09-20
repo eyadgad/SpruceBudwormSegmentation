@@ -43,9 +43,9 @@ from src import config as cfgmod
 from src import data_prep, engine, metrics as metrics_mod, paths
 from src.finalize import load_best_or_final
 from src.models import create_model
+from src.channels import GRID
 from src.presence import analyze_presence
-
-GRID = {"h": 960, "w": 960, "pixel_m": 500, "radar": "XAM Val d'Irene, Quebec"}
+from src.stats import paired_cluster_bootstrap, wilcoxon_paired
 SEG_COLUMNS = [
     ("dice", "dice_macro"), ("dice_micro", "dice_micro"),
     ("iou", "iou_macro"), ("iou_micro", "iou_micro"),
@@ -183,6 +183,67 @@ def score_variant(cfg: Dict, manifest: pd.DataFrame, norm_stats: Dict, device,
     return samples, {"per_split": per_split, "cls_scores": cls_scores}
 
 
+def paired_table(samples_a: List[Dict], samples_b: List[Dict],
+                 name_a: str, name_b: str, keys=("dice", "iou", "precision", "recall", "nsd")) -> pd.DataFrame:
+    """Night-clustered paired comparison on positive scans sharing a timestamp."""
+    by_a = {int(s["ts"]): s for s in samples_a if int(s.get("label", 0)) == 1}
+    by_b = {int(s["ts"]): s for s in samples_b if int(s.get("label", 0)) == 1}
+    common = sorted(set(by_a) & set(by_b))
+    rows = []
+    for ts in common:
+        a, b = by_a[ts], by_b[ts]
+        rows.append({"ts": ts, "night": a.get("night") or b.get("night")})
+        for k in keys:
+            rows[-1][f"{k}_a"] = a.get(k)
+            rows[-1][f"{k}_b"] = b.get(k)
+    nights = [r["night"] for r in rows]
+    out = []
+    for k in keys:
+        av = [r[f"{k}_a"] for r in rows]
+        bv = [r[f"{k}_b"] for r in rows]
+        boot = paired_cluster_bootstrap(av, bv, nights)
+        wil = wilcoxon_paired(av, bv)
+        out.append({
+            "metric": k,
+            "n": len(rows),
+            "mean_a": float(np.nanmean(av)) if rows else None,
+            "mean_b": float(np.nanmean(bv)) if rows else None,
+            "delta_a_minus_b": boot["point"],
+            "ci_lo": boot["lo"],
+            "ci_hi": boot["hi"],
+            "n_nights": boot["n_nights"],
+            "wilcoxon_p": wil["p_value"],
+            "name_a": name_a,
+            "name_b": name_b,
+        })
+    return pd.DataFrame(out)
+
+
+def attach_swin_probs(samples: List[Dict], manifest, cls_cfg, cls_ckpt, device) -> None:
+    """Write Swin p_cls onto each sample (val+test) for presence score_field=p_cls."""
+    from src.cascade import _cls_probs, _restore
+    rows = [r for r in manifest.to_dict("records")
+            if str(r["split"]) in {"val", "test"}]
+    # Score in the same order as `rows`; map by timestamp.
+    model = _restore(cls_cfg, cls_ckpt, device)
+    from src import data_prep
+    _, norm_stats = data_prep.load_artifacts(cls_cfg)
+    # Use the passed manifest's matching rows in timestamp order.
+    by_ts = {int(r["timestamp"]): r for r in rows}
+    ordered = [by_ts[int(s["ts"])] for s in samples if int(s["ts"]) in by_ts]
+    probs = _cls_probs(model, ordered, cls_cfg, norm_stats, device)
+    ts_to_p = {int(r["timestamp"]): p for r, p in zip(ordered, probs)}
+    del model
+    for s in samples:
+        p = ts_to_p.get(int(s["ts"]))
+        if p is None:
+            continue
+        s["p_cls"] = float(p)
+        models = s.setdefault("models", {})
+        for block in models.values():
+            block["p_cls"] = float(p)
+
+
 def roc_auc(truth: List[int], scores: List[float]) -> float | None:
     """Rank-based ROC-AUC (ties averaged); None unless both classes are present."""
     y = np.asarray(truth, dtype=bool)
@@ -211,6 +272,11 @@ def main() -> None:
     ap.add_argument("--experiments", default="configs/experiments_night.yaml")
     ap.add_argument("--names", default=None, help="comma-separated subset")
     ap.add_argument("--baseline", default="night_base_attunet9")
+    ap.add_argument("--cls-base", default="configs/base_config_cascade_cls.yaml")
+    ap.add_argument("--cls-experiments", default="configs/experiments_cascade_cls.yaml")
+    ap.add_argument("--cls-name", default="cls_swin_tiny_bal")
+    ap.add_argument("--pair-baseline", default="unet_night_s42")
+    ap.add_argument("--pair-final", default="night_base_attunet9_s42")
     args = ap.parse_args()
 
     base = cfgmod.load_base_config(args.base_config)
@@ -230,6 +296,7 @@ def main() -> None:
         encoding="utf-8")
 
     seg_rows, cls_rows = [], []
+    samples_by_name: Dict[str, List[Dict]] = {}
     for exp in experiments:
         cfg = cfgmod.resolve_experiment(base, exp)
         name = cfg["name"]
@@ -256,11 +323,12 @@ def main() -> None:
                        "models": [{"key": key, "name": name,
                                    "disp": name, "thr": threshold}],
                        "samples": samples}
+        samples_by_name[name] = samples
         (out_dir / f"{name}_samples.json").write_text(
             json.dumps(json_safe(samples_doc), separators=(",", ":"), allow_nan=False),
             encoding="utf-8")
 
-        presence = analyze_presence(samples_doc, dataset_doc)
+        presence = analyze_presence(samples_doc, dataset_doc, score_field="pred_area")
         (out_dir / f"presence_{name}.json").write_text(
             json.dumps(json_safe(presence), separators=(",", ":"), allow_nan=False),
             encoding="utf-8")
@@ -334,6 +402,35 @@ def main() -> None:
                     "only: the presence metrics in `comparison.md` are derived from "
                     "segmentation for direct comparability across all variants.\n\n")
             f.write(cdf.to_markdown(index=False))
+            f.write("\n")
+
+    from src.cascade import _load_done
+    cls_cfg, cls_res, cls_ckpt = _load_done(args.cls_base, args.cls_experiments, args.cls_name)
+    if cls_res is not None and cls_ckpt is not None:
+        print(f"[cls] attaching {args.cls_name} p_cls to samples")
+        for name, samples in samples_by_name.items():
+            attach_swin_probs(samples, manifest, cls_cfg, cls_ckpt, device)
+            key = name.replace("night_", "").replace("_attunet9", "") or name
+            samples_doc = json.loads((out_dir / f"{name}_samples.json").read_text(encoding="utf-8"))
+            samples_doc["samples"] = samples
+            (out_dir / f"{name}_samples.json").write_text(
+                json.dumps(json_safe(samples_doc), separators=(",", ":"), allow_nan=False),
+                encoding="utf-8")
+            presence_cls = analyze_presence(samples_doc, dataset_doc, score_field="p_cls")
+            (out_dir / f"presence_{name}_pcls.json").write_text(
+                json.dumps(json_safe(presence_cls), separators=(",", ":"), allow_nan=False),
+                encoding="utf-8")
+
+    if args.pair_baseline in samples_by_name and args.pair_final in samples_by_name:
+        pdf = paired_table(samples_by_name[args.pair_final],
+                           samples_by_name[args.pair_baseline],
+                           args.pair_final, args.pair_baseline)
+        pdf.to_csv(out_dir / f"paired_{args.pair_baseline}.csv", index=False)
+        with open(out_dir / f"paired_{args.pair_baseline}.md", "w", encoding="utf-8") as f:
+            f.write(f"# Paired {args.pair_final} vs {args.pair_baseline} (positives, night-clustered)\n\n")
+            f.write("Lead interval is the night-clustered bootstrap on the difference. "
+                    "Wilcoxon over scans is anticonservative under within-night correlation.\n\n")
+            f.write(pdf.to_markdown(index=False, floatfmt=".4f"))
             f.write("\n")
 
     print(f"\n[done] wrote {out_dir}")

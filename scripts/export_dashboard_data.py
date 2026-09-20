@@ -284,7 +284,8 @@ def stage_dataset() -> None:
     }
 
     split_summary = json.loads((ROOT / "artifacts" / "split_summary.json").read_text())
-    grid = {"h": 960, "w": 960, "pixel_m": 500, "radar": "XAM Val d'Irene, Quebec"}
+    from src.channels import GRID
+    grid = dict(GRID)
     _w("dataset.json", {
         "generated": datetime.now().isoformat(timespec="seconds"),
         "grid": grid,
