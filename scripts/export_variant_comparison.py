@@ -48,17 +48,31 @@ from src.presence import analyze_presence
 from src.stats import paired_cluster_bootstrap, wilcoxon_paired
 SEG_COLUMNS = [
     ("dice", "dice_macro"), ("dice_micro", "dice_micro"),
+    # Global = pixel-pooled over ALL scans; the only overlap metric a presence
+    # gate can move, and the paper's integrated headline.
+    ("dice_global", "dice_global"),
     ("iou", "iou_macro"), ("iou_micro", "iou_micro"),
     ("precision", "precision"), ("recall", "recall"),
     ("boundary_iou", "boundary_iou"), ("nsd", "nsd"),
+    ("bf1", "bf1"), ("bf1_fuzzy", "bf1_fuzzy"),
     ("hd95", "hd95"), ("assd", "assd"), ("bg_fp_rate", "bg_fp_rate"),
+    ("far_scan", "far_scan"), ("sensitivity_retained", "sensitivity_retained"),
 ]
 
 
 def _r(x, nd=4):
-    if x is None:
+    """Round a scalar for JSON; None for anything not a finite number.
+
+    Must tolerate non-scalars: ``metrics.surface_metrics`` returns ``nsd_curve``
+    as a nested dict alongside its scalars, and callers map this over whole
+    metric dicts.
+    """
+    if x is None or isinstance(x, (dict, list, tuple, set)):
         return None
-    v = float(x)
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
     return round(v, nd) if np.isfinite(v) else None
 
 
@@ -148,9 +162,16 @@ def score_variant(cfg: Dict, manifest: pd.DataFrame, norm_stats: Dict, device,
                 m["boundary_iou"] = metrics_mod.boundary_iou(pred, y)
                 m.update(metrics_mod.surface_metrics(pred, y, tau=tau))
                 pos_metrics.append(m)
-                record.update({k: _r(v) for k, v in m.items()})
+                # Scalars only: nsd_curve is a nested dict and is kept verbatim
+                # (its lists are already JSON-safe) so the NSD-vs-distance figure
+                # can be built with a night-clustered band.
+                record.update({k: _r(v) for k, v in m.items()
+                               if not isinstance(v, dict)})
+                if isinstance(m.get("nsd_curve"), dict):
+                    record["nsd_curve"] = m["nsd_curve"]
                 model_block.update({k: _r(m.get(k)) for k in
-                                    ("dice", "iou", "precision", "recall", "boundary_iou", "nsd")})
+                                    ("dice", "iou", "precision", "recall",
+                                     "boundary_iou", "nsd", "bf1", "bf1_fuzzy")})
                 model_block.update({"tp": tp, "fp": fp, "fn": fn})
             else:
                 rate = _r(float(pred.mean()), 6)
@@ -167,27 +188,62 @@ def score_variant(cfg: Dict, manifest: pd.DataFrame, norm_stats: Dict, device,
                 print(f"    {cfg['name']} {split} {i + 1}/{len(rows)}")
 
         keys = ["dice", "iou", "precision", "recall", "f1", "accuracy",
-                "boundary_iou", "nsd", "hd95", "assd"]
+                "boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy"]
         block = {k: (float(np.nanmean([m[k] for m in pos_metrics])) if pos_metrics else float("nan"))
                  for k in keys}
         rows_split = [s for s in samples if s["split"] == split]
-        TP = sum(s["tp"] for s in rows_split if s["label"] == 1)
-        FP = sum(s["fp"] for s in rows_split if s["label"] == 1)
-        FN = sum(s["fn"] for s in rows_split if s["label"] == 1)
+        pos_rows = [s for s in rows_split if s["label"] == 1]
+        neg_rows = [s for s in rows_split if s["label"] == 0]
+        TP = sum(s["tp"] for s in pos_rows)
+        FP = sum(s["fp"] for s in pos_rows)
+        FN = sum(s["fn"] for s in pos_rows)
         block["dice_micro"] = 2 * TP / (2 * TP + FP + FN + 1e-8)
         block["iou_micro"] = TP / (TP + FP + FN + 1e-8)
+        # Pixel-pooled over ALL scans: quiet scans contribute false positives, so
+        # this is the only overlap metric a presence gate can move. dice_micro
+        # stays positives-only so existing numbers do not shift.
+        FP_all = sum(s["fp"] for s in rows_split)
+        block["dice_global"] = 2 * TP / (2 * TP + FP_all + FN + 1e-8)
+        block["iou_global"] = TP / (TP + FP_all + FN + 1e-8)
         block["bg_fp_rate"] = float(np.mean(bg_fp)) if bg_fp else float("nan")
-        block["n_pos_scenes"] = sum(1 for s in rows_split if s["label"] == 1)
-        block["n_neg_scenes"] = sum(1 for s in rows_split if s["label"] == 0)
+        # Operational false-alarm rate at the frozen minimum swarm area.
+        a_km2 = float(cfg["eval"].get("far_min_area_km2", 25.0))
+        a_cells = max(1, int(round(metrics_mod.km2_to_cells(a_km2))))
+        block["far_min_area_km2"] = a_km2
+        block["far_scan"] = (sum(1 for s in neg_rows if s["pred_area"] >= a_cells)
+                             / len(neg_rows)) if neg_rows else float("nan")
+        block["sensitivity_retained"] = (
+            sum(1 for s in pos_rows if s["pred_area"] >= a_cells) / len(pos_rows)
+        ) if pos_rows else float("nan")
+        curves = [m["nsd_curve"] for m in pos_metrics if isinstance(m.get("nsd_curve"), dict)]
+        if curves:
+            block["nsd_curve"] = {
+                "taus_px": curves[0]["taus_px"],
+                "taus_km": curves[0]["taus_km"],
+                "nsd": [float(v) for v in
+                        np.nanmean(np.asarray([c["nsd"] for c in curves], float), axis=0)],
+            }
+        block["n_pos_scenes"] = len(pos_rows)
+        block["n_neg_scenes"] = len(neg_rows)
         per_split[split] = block
     return samples, {"per_split": per_split, "cls_scores": cls_scores}
 
 
 def paired_table(samples_a: List[Dict], samples_b: List[Dict],
-                 name_a: str, name_b: str, keys=("dice", "iou", "precision", "recall", "nsd")) -> pd.DataFrame:
-    """Night-clustered paired comparison on positive scans sharing a timestamp."""
-    by_a = {int(s["ts"]): s for s in samples_a if int(s.get("label", 0)) == 1}
-    by_b = {int(s["ts"]): s for s in samples_b if int(s.get("label", 0)) == 1}
+                 name_a: str, name_b: str,
+                 keys=("dice", "iou", "precision", "recall", "nsd", "bf1_fuzzy"),
+                 split: str = "test") -> pd.DataFrame:
+    """Night-clustered paired comparison on positive scans sharing a timestamp.
+
+    ``split`` defaults to ``test``: thresholds and the model choice were selected
+    on validation, so pooling val into the confirmatory interval would report a
+    partly in-sample effect. Pass ``split=None`` only for exploratory views.
+    """
+    def _keep(s):
+        return int(s.get("label", 0)) == 1 and (split is None or s.get("split") == split)
+
+    by_a = {int(s["ts"]): s for s in samples_a if _keep(s)}
+    by_b = {int(s["ts"]): s for s in samples_b if _keep(s)}
     common = sorted(set(by_a) & set(by_b))
     rows = []
     for ts in common:
@@ -213,6 +269,7 @@ def paired_table(samples_a: List[Dict], samples_b: List[Dict],
             "ci_hi": boot["hi"],
             "n_nights": boot["n_nights"],
             "wilcoxon_p": wil["p_value"],
+            "split": split or "val+test",
             "name_a": name_a,
             "name_b": name_b,
         })
@@ -422,16 +479,28 @@ def main() -> None:
                 encoding="utf-8")
 
     if args.pair_baseline in samples_by_name and args.pair_final in samples_by_name:
-        pdf = paired_table(samples_by_name[args.pair_final],
-                           samples_by_name[args.pair_baseline],
-                           args.pair_final, args.pair_baseline)
+        # TEST is the confirmatory comparison; VAL is reported separately for
+        # reference only. Pooling them would fold the split that selected the
+        # model and thresholds into the interval.
+        frames = {s: paired_table(samples_by_name[args.pair_final],
+                                  samples_by_name[args.pair_baseline],
+                                  args.pair_final, args.pair_baseline, split=s)
+                  for s in ("test", "val")}
+        pdf = pd.concat([frames["test"], frames["val"]], ignore_index=True)
         pdf.to_csv(out_dir / f"paired_{args.pair_baseline}.csv", index=False)
         with open(out_dir / f"paired_{args.pair_baseline}.md", "w", encoding="utf-8") as f:
-            f.write(f"# Paired {args.pair_final} vs {args.pair_baseline} (positives, night-clustered)\n\n")
+            f.write(f"# Paired {args.pair_final} vs {args.pair_baseline} "
+                    f"(positive scans, night-clustered)\n\n")
             f.write("Lead interval is the night-clustered bootstrap on the difference. "
-                    "Wilcoxon over scans is anticonservative under within-night correlation.\n\n")
-            f.write(pdf.to_markdown(index=False, floatfmt=".4f"))
-            f.write("\n")
+                    "Wilcoxon over scans is anticonservative under within-night "
+                    "correlation.\n\n")
+            f.write("**TEST is the confirmatory result.** The validation block is "
+                    "reference only: the model and every threshold were selected on "
+                    "it, so its effect is partly in-sample.\n\n")
+            for s in ("test", "val"):
+                f.write(f"## {s}\n\n")
+                f.write(frames[s].to_markdown(index=False, floatfmt=".4f"))
+                f.write("\n\n")
 
     print(f"\n[done] wrote {out_dir}")
     print(df.to_string(index=False))

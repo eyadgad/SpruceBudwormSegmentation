@@ -633,6 +633,65 @@ class PublicationMetrics(unittest.TestCase):
         self.assertEqual(a & b, set(), "same run assigned to both machines")
         self.assertEqual(a | b, combined, "A+B does not equal the combined set")
 
+    def test_rounding_helper_tolerates_nested_metric_values(self):
+        """surface_metrics returns nsd_curve as a dict; _r is mapped over it."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from export_variant_comparison import _r
+        from src import metrics as M
+        true = np.zeros((32, 32), bool); true[8:20, 8:20] = True
+        pred = np.zeros((32, 32), bool); pred[9:21, 9:21] = True
+        m = M.compute_metrics(pred, true)
+        m.update(M.surface_metrics(pred, true, tau=2.0))
+        self.assertIsInstance(m["nsd_curve"], dict)
+        self.assertIsNone(_r(m["nsd_curve"]))          # must not raise
+        rec = {k: _r(v) for k, v in m.items() if not isinstance(v, dict)}
+        self.assertIsInstance(rec["nsd"], float)
+
+    def test_cache_path_aggregates_the_same_keys_as_full_scene(self):
+        """metrics_from_cache must not silently report fewer metrics."""
+        from src.engine import metrics_from_cache
+        items = []
+        for i in range(12):
+            lab = 1 if i < 6 else 0
+            y = np.zeros((32, 32), np.float32)
+            if lab:
+                y[8:20, 8:20] = 1
+            items.append({"label": lab, "y": y, "prob": y * 0.7 + 0.1,
+                          "p_cls": 0.9 if lab else 0.01,
+                          "ts": i, "night": f"n{i // 3}"})
+        out = metrics_from_cache(items, 0.5, cfg={
+            "eval": {"boundary_metrics": True, "bootstrap": False}})
+        for k in ("dice", "dice_micro", "dice_global", "nsd", "bf1", "bf1_fuzzy",
+                  "nsd_curve", "far_scan", "sensitivity_retained", "scan_auprc"):
+            self.assertIn(k, out, f"metrics_from_cache dropped {k}")
+
+    def test_paired_table_does_not_pool_val_into_test(self):
+        """Thresholds are chosen on val; pooling makes the interval in-sample."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from export_variant_comparison import paired_table
+        a = [{"ts": 1, "label": 1, "split": "val", "night": "n1", "dice": 0.9},
+             {"ts": 2, "label": 1, "split": "test", "night": "n2", "dice": 0.5}]
+        b = [{"ts": 1, "label": 1, "split": "val", "night": "n1", "dice": 0.1},
+             {"ts": 2, "label": 1, "split": "test", "night": "n2", "dice": 0.4}]
+        self.assertEqual(int(paired_table(a, b, "A", "B", keys=("dice",),
+                                          split="test").iloc[0]["n"]), 1)
+        self.assertEqual(int(paired_table(a, b, "A", "B", keys=("dice",),
+                                          split=None).iloc[0]["n"]), 2)
+
+    def test_refuses_to_build_a_second_frozen_split(self):
+        """A machine with no manifest and an empty mirror must not invent one."""
+        import tempfile, shutil
+        from src import run as R
+        tmp = Path(tempfile.mkdtemp(prefix="nosplit_"))
+        try:
+            cfg = {"data": {"root": "Data",
+                            "artifacts_dir": str(tmp / "absent")}}
+            with self.assertRaises(SystemExit) as ctx:
+                R.ensure_artifacts(cfg, verbose=False, allow_build=False)
+            self.assertIn("REFUSING", str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_calibrate_cls_uses_sensitivity_floor(self):
         from src.engine import calibrate_cls_threshold, metrics_from_cache
         rng = np.random.default_rng(0)

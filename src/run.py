@@ -31,10 +31,22 @@ REFERENCE_BASELINES = [
 ]
 
 
-def ensure_artifacts(base_cfg: Dict, verbose=True) -> None:
+def ensure_artifacts(base_cfg: Dict, verbose=True, allow_build: bool = True) -> None:
     adir = paths.artifacts_dir(base_cfg)
     if (adir / "manifest.csv").exists() and (adir / "norm_stats.json").exists():
         return
+    if not allow_build:
+        raise SystemExit(
+            f"[prepare] REFUSING to build a split.\n"
+            f"  {adir} has no manifest, and the mirror has none either.\n"
+            f"  Building one here would create a SECOND frozen split: negatives are\n"
+            f"  sampled before the night->split assignment, so this machine's split\n"
+            f"  would not match another machine's, and results would not be comparable.\n"
+            f"  If another machine owns the split, wait for it to publish "
+            f"(its '[manifest] sha256=...' line), then re-run.\n"
+            f"  If this machine IS the origin, create the split deliberately:\n"
+            f"    .venv\\Scripts\\python.exe -m src.data_prep "
+            f"--base-config configs\\base_config_night.yaml")
     if verbose:
         print("[prepare] artifacts missing -> running data preparation ...")
     info = data_prep.prepare(base_cfg)
@@ -139,8 +151,16 @@ def run_all(base_config_path: str, experiments_path: str, verbose=True, fresh=Fa
     # reshuffles val/test). Restore the frozen manifest first; only build one if
     # the mirror has none.
     from . import sync
+    adir = paths.artifacts_dir(base_cfg)
     sync.pull_artifacts(base_cfg)
-    ensure_artifacts(base_cfg, verbose=verbose)  # runs data prep in-parent if needed
+    have_local = ((adir / "manifest.csv").exists()
+                  and (adir / "norm_stats.json").exists())
+    mirror_active = sync.RunSync(base_cfg, "_probe", adir, adir).enabled
+    # Building a split is only safe when this machine is its origin. A reachable
+    # but empty mirror with nothing local means another machine may already own
+    # the frozen split, so refuse rather than publish a competing one.
+    ensure_artifacts(base_cfg, verbose=verbose,
+                     allow_build=have_local or not mirror_active)
     # Verify against the mirror before training, then publish the split so a
     # second machine (e.g. running the classifier seeds) inherits it instead of
     # building its own.

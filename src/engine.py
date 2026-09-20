@@ -626,7 +626,9 @@ def metrics_from_cache(items, seg_threshold: float, cls_threshold: float = 0.0,
                 m.update(metrics_mod.surface_metrics(pred, y, **surf_kw))
             pos_metrics.append(m)
             rec.update({k: m.get(k) for k in
-                        ("dice", "iou", "precision", "recall", "nsd", "hd95", "assd")})
+                        ("dice", "iou", "precision", "recall", "f1", "accuracy",
+                         "boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy",
+                         "nsd_curve")})
             TP += tp; FP += fp; FN += fn
             if pred_area >= a_cells:
                 n_sens += 1
@@ -634,8 +636,13 @@ def metrics_from_cache(items, seg_threshold: float, cls_threshold: float = 0.0,
             bg_fp.append(float(pred.mean()))
         per_scene.append(rec)
     eps = 1e-8
+    # Aggregate the same key set as evaluate_full_scene, or the cache path
+    # silently reports fewer metrics than a full-scene pass on identical inputs.
+    agg_keys = ["dice", "iou", "precision", "recall", "f1", "accuracy"]
+    if boundary:
+        agg_keys += ["boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy"]
     out = {k: float(np.nanmean([m[k] for m in pos_metrics])) if pos_metrics else float("nan")
-           for k in ("dice", "iou", "precision", "recall", "f1", "accuracy")}
+           for k in agg_keys}
     out["dice_micro"] = 2 * TP / (2 * TP + FP + FN + eps)
     out["dice_global"] = 2 * TP_all / (2 * TP_all + FP_all + FN_all + eps)
     out["iou_global"] = TP_all / (TP_all + FP_all + FN_all + eps)
@@ -664,6 +671,9 @@ def metrics_from_cache(items, seg_threshold: float, cls_threshold: float = 0.0,
     out["scan_recall"] = cm.get("recall")
     out["scan_specificity"] = cm.get("specificity")
     out["scan_accuracy"] = cm.get("accuracy")
+    curve = _mean_nsd_curve(pos_metrics)
+    if curve is not None:
+        out["nsd_curve"] = curve
     out["per_scene"] = per_scene
     return out
 

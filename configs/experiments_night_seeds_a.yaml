@@ -5,8 +5,8 @@
 # (src.run pushes artifacts_night/ before training), so start it first and wait
 # for the "[manifest] sha256=..." line before launching machine B.
 #
-# The combined experiments_night_seeds.yaml still lists all 8 runs and is what
-# src.finalize uses once both machines are done.
+# The combined experiments_night_seeds.yaml still lists all 10 runs (5 Attention
+# U-Net + 5 U-Net) and is what src.finalize uses once both machines are done.
 
 _attn: &attn
   channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
