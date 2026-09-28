@@ -322,8 +322,11 @@ constants (615 scans, 110/113 nights, `validation_test == 93`) describe the
 
 ## 8. Results
 
-**PENDING** — to be filled from the completed runs. No improvement will be
-claimed that the controlled comparison against S0 does not demonstrate.
+The S0–S3b chain above was development screening on an earlier split and is not
+the publication comparison. The publication results, including the five-seed
+robustness check, are written in `docs/publication_results.md` and on the
+evaluation site at `#/publication`. No architecture gain is claimed beyond what
+the night-clustered intervals support.
 
 ---
 

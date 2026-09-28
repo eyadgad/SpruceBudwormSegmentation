@@ -463,6 +463,9 @@ def main() -> None:
 
     from src.cascade import _load_done
     cls_cfg, cls_res, cls_ckpt = _load_done(args.cls_base, args.cls_experiments, args.cls_name)
+    if cls_res is not None and cls_ckpt is not None and not Path(cls_ckpt).exists():
+        print(f"[cls] {args.cls_name} has a result but no weights at {cls_ckpt}; skipping p_cls")
+        cls_ckpt = None
     if cls_res is not None and cls_ckpt is not None:
         print(f"[cls] attaching {args.cls_name} p_cls to samples")
         for name, samples in samples_by_name.items():
