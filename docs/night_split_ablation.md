@@ -325,7 +325,7 @@ constants (615 scans, 110/113 nights, `validation_test == 93`) describe the
 The S0–S3b chain above was development screening on an earlier split and is not
 the publication comparison. The publication results, including the five-seed
 robustness check, are written in `docs/publication_results.md` and on the
-evaluation site at `#/publication`. No architecture gain is claimed beyond what
+evaluation site at `publication.html`. No architecture gain is claimed beyond what
 the night-clustered intervals support.
 
 ---

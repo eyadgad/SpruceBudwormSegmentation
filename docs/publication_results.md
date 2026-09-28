@@ -2,7 +2,7 @@
 
 Held-out test performance of the frozen night-split retrain. Five Attention U-Net seeds are compared with five U-Net seeds, scored once at a validation-locked threshold of 0.15. The manifest SHA-256 is `170c442d1dd7b878cdb4157139f7b4dc178f6d0e078534b6dc291d3c7091222f`. The test split contains 161 positive and 147 negative scans, from 21 migration nights and 19 quiet nights. No night is shared with training or validation.
 
-Figures for this section are on the evaluation site (`#/publication`).
+The manuscript page, with the Python figures, is `publication.html` on the evaluation site. The figures are written by `scripts/plot_publication.py`: five-seed aggregate, pre-specified paired test, seed-wise robustness of that test, NSD against tolerance, and scan/night ROC and precision–recall.
 
 ## Segmentation
 
