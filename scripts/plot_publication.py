@@ -286,6 +286,39 @@ def oracle(cache) -> None:
                   f"gain {g(fp_oracle) - g(fp_all):+.4f}")
 
 
+def fig_year(cache) -> None:
+    """Skill against calendar year, the stability axis analogous to lead time."""
+    years = list(range(2013, 2020))
+    fig, ax = plt.subplots(figsize=(7.1, 3.4))
+    for fam, color, label in (("attn", ATTN, "Attention U-Net"), ("unet", UNET, "U-Net")):
+        means, sds, ns = [], [], []
+        for year in years:
+            vals = []
+            n = None
+            for seed in SEEDS:
+                rows = [r for r in _pos(cache[fam][seed], "test") if int(r["year"]) == year]
+                n = len(rows)
+                vals.append(float(np.mean([r["dice"] for r in rows])) if rows else np.nan)
+            means.append(float(np.mean(vals)))
+            sds.append(float(np.std(vals, ddof=1)))
+            ns.append(n)
+        x = np.asarray(years, float)
+        y = np.asarray(means)
+        e = np.asarray(sds)
+        ax.fill_between(x, y - e, y + e, color=color, alpha=0.15, linewidth=0)
+        ax.plot(x, y, color=color, marker="o", markersize=4.5, linewidth=1.4, label=label)
+    ax.set_xticks(years)
+    ax.set_xlabel("Year")
+    ax.set_ylabel("Test macro Dice")
+    ax.set_ylim(0.2, 0.8)
+    # Sample size is identical for both families.
+    ymin = 0.22
+    for year, n in zip(years, ns):
+        ax.text(year, ymin, f"n={n}", ha="center", va="bottom", fontsize=7, color="#555555")
+    ax.legend(frameon=False, loc="upper left")
+    _save(fig, "fig6_year")
+
+
 def main() -> None:
     cache = {
         "attn": {s: _samples(f"night_base_attunet9_s{s}") for s in SEEDS},
@@ -295,6 +328,7 @@ def main() -> None:
     fig_paired(cache)
     fig_robust(cache)
     fig_nsd(cache)
+    fig_year(cache)
     fig_presence()
     oracle(cache)
     print(f"[done] {OUT}")
