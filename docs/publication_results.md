@@ -2,7 +2,7 @@
 
 Held-out test performance of the frozen night-split retrain. Five Attention U-Net seeds are compared with five U-Net seeds, scored once at a validation-locked threshold of 0.15. The manifest SHA-256 is `170c442d1dd7b878cdb4157139f7b4dc178f6d0e078534b6dc291d3c7091222f`. The test split contains 161 positive and 147 negative scans, from 21 migration nights and 19 quiet nights. No night is shared with training or validation.
 
-The publication text is the manuscript page `publication.html` on the evaluation site. It follows the results-and-discussion order used for weather-radar deep-learning papers: a controlled comparison, an ablation of the one module that differs (attention gates against the U-Net), robustness along seed, year and boundary tolerance, then detection skill and an oracle presence gate. The discussion interprets those results rather than restating the tables. Figures are written by `scripts/plot_publication.py`.
+The manuscript page is `publication.html` on the evaluation site. It contains the data description, the five-seed comparison, the attention-gate ablation, robustness by year and boundary tolerance, test-set case plates, Swin-Tiny test detection for seeds 43–46, and the cascade at the Youden and high-sensitivity operating points. Figures are written by `scripts/plot_publication.py` and `scripts/publication_finish.py`.
 
 ## Segmentation
 
