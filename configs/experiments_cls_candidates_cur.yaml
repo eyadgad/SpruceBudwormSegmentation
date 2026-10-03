@@ -1,0 +1,17 @@
+# Remaining plan classifiers on the FROZEN night split.
+# cls_swin_tiny_bal (seed 42) already exists — do not retrain it.
+# New `_bal` names so the superseded four-classifier results are kept.
+#
+#   .venv\Scripts\python.exe -m src.classify --all ^
+#       --base-config configs\base_config_cls.yaml ^
+#       --experiments configs\experiments_cls_candidates_cur.yaml
+
+experiments:
+  - name: cls_convnext_tiny_bal
+    model: {name: convnext_tiny, pretrained: true, img_size: 384}
+
+  - name: cls_efficientnetv2_s_bal
+    model: {name: efficientnetv2_s, pretrained: true, img_size: 384}
+
+  - name: cls_resnext50_bal
+    model: {name: resnext50, pretrained: true, img_size: 384}

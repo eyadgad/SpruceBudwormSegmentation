@@ -1,0 +1,19 @@
+# Remaining plan: one-model cascade, init from NEW-split S0 (s42), not old S0.
+# New names so gated_attn_unet / frozen_s0_cls (old-S0 init) are not overwritten.
+#
+#   run.bat --base-config configs\base_config_cascade.yaml ^
+#           --experiments configs\experiments_cascade_cur.yaml
+#
+# Then the linear probe:
+#   .venv\Scripts\python.exe -m src.frozen_cls ^
+#       --base-config configs\base_config_frozen_cls.yaml ^
+#       --experiments configs\experiments_frozen_cls_cur.yaml
+
+experiments:
+  - name: gated_attn_unet_cur
+    model:
+      name: attention_unet
+      base_filters: 32
+      cls_head: true
+      img_size: 384
+      init_checkpoint: outputs/night_split/checkpoints/night_base_attunet9_s42_best.pt

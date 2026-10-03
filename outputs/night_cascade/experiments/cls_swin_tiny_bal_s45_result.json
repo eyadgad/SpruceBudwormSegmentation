@@ -1,0 +1,27 @@
+{
+  "name": "cls_swin_tiny_bal_s45",
+  "task": "classify",
+  "model": "swin_tiny",
+  "n_params": 27530875,
+  "best_val_auc": 0.9193441572313612,
+  "best_epoch": 32,
+  "calibrated_threshold": 0.55,
+  "val": {
+    "auroc": 0.9193441572313612,
+    "accuracy": 0.8594771241830066,
+    "precision": 0.868421052631579,
+    "recall": 0.8516129032258064,
+    "f1": 0.8599348534201955,
+    "youden_j": 0.7191625720999786,
+    "n": 612,
+    "n_positive": 310,
+    "n_negative": 302,
+    "confusion": {
+      "tp": 264,
+      "fp": 40,
+      "tn": 262,
+      "fn": 46
+    },
+    "threshold": 0.55
+  }
+}

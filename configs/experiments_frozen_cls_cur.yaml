@@ -1,0 +1,15 @@
+# Linear probe on frozen NEW-split S0 (s42). Encoder never updates.
+#
+#   .venv\Scripts\python.exe -m src.frozen_cls ^
+#       --base-config configs\base_config_frozen_cls.yaml ^
+#       --experiments configs\experiments_frozen_cls_cur.yaml
+
+experiments:
+  - name: frozen_s0_cls_cur
+    model:
+      name: attention_unet
+      base_filters: 32
+      cls_head: true
+      img_size: 384
+      init_checkpoint: outputs/night_split/checkpoints/night_base_attunet9_s42_best.pt
+      freeze_backbone: true

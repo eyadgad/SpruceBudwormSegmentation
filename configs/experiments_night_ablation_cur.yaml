@@ -1,0 +1,47 @@
+# Remaining plan ablation on the FROZEN night split (balanced, ratio 1.0).
+# S0 is already night_base_attunet9_s42 — do not retrain it.
+# New names so superseded S1–S3b result.json files are not skipped/overwritten.
+#
+#   run.bat --base-config configs\base_config_night.yaml ^
+#           --experiments configs\experiments_night_ablation_cur.yaml
+#
+# Never --fresh. Test stays deferred.
+
+_common: &common
+  channels: [th_e0, th_e1, th_e2, th_e3, th_e4, th_e5, th_e6, th_e7, th_e8, valid_mask]
+  model:  {name: attention_unet, base_filters: 32}
+  loss:   {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333}
+  target: {mode: threshold, dbz_threshold: 0.0}
+  patch:  {patches_per_image: 8}
+  train:  {epochs: 100, patience: 50, seed: 42}
+  eval:   {tta: false, gate: "off", defer_test: true}
+
+experiments:
+  # S1 — night-balanced sampling (train only)
+  - name: night_bal_attunet9_cur
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+
+  # S2 — joint presence head, lambda_cls 0.1 (chosen on the old split; not re-probed)
+  - name: night_mtl_attunet9_cur
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+
+  # S3a — temporal channel stack
+  - name: night_tstack_attunet9_cur
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+    temporal: {enabled: true, radius: 1, max_gap_minutes: 35.0, mode: stack}
+
+  # S3b — L-TAE temporal attention
+  - name: night_ltae_attunet9_cur
+    <<: *common
+    train: {epochs: 100, patience: 50, seed: 42, night_balanced: true}
+    model: {name: attention_unet, base_filters: 32, cls_head: true}
+    loss:  {name: focal_tversky, alpha: 0.3, beta: 0.7, gamma: 1.333, lambda_cls: 0.1}
+    temporal: {enabled: true, radius: 1, max_gap_minutes: 35.0, mode: attention,
+               n_head: 8, d_k: 8}

@@ -1,0 +1,9 @@
+# TransUNet is already on the current split but stopped at epoch 14/50.
+# Same name + resume checkpoint → continues; no result.json so it will not skip.
+#
+#   run.bat --base-config configs\base_config_gated.yaml ^
+#           --experiments configs\experiments_transunet_resume.yaml
+
+experiments:
+  - name: transunet_night
+    model: {name: transunet}
