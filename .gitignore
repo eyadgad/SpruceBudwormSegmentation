@@ -5,6 +5,9 @@
 # --- Local agent plans ---
 .claude/
 
+# Separate project (https://github.com/eyadgad/UCPA_Pilot_Study)
+UCPA_Pilot_Study/
+
 # --- Python environment / caches ---
 .venv/
 __pycache__/
