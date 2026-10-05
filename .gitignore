@@ -5,7 +5,8 @@
 # --- Local agent plans ---
 .claude/
 
-# Separate project (https://github.com/eyadgad/UCPA_Pilot_Study)
+# Separate FL/UCPA pilot (not part of this radar repo)
+FL_Pilot_Study/
 UCPA_Pilot_Study/
 
 # --- Python environment / caches ---
