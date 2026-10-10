@@ -1,9 +1,10 @@
-"""Finish the publication evidence the frozen test set can still support.
+"""Finish the publication evidence on the frozen test set.
 
-Scores the four Swin-Tiny checkpoints that exist (seeds 43-46) on the test
-split, applies each as a scan gate to the seed-42 segmenters, and writes
-three case plates. The seed-42 classifier weights are not on disk; nothing
-here refits a threshold.
+Scores the five Swin-Tiny checkpoints (seeds 42-46) on validation and test,
+applies each as a scan gate to the seed-42 segmenters at its validation Youden
+threshold and at the frozen high-sensitivity cutoff (cls_r_min, chosen on
+validation scores), and writes three case plates. Nothing here refits a
+threshold on test.
 """
 from __future__ import annotations
 
@@ -28,13 +29,15 @@ from src.config import load_base_config  # noqa: E402
 from src.data_prep import load_artifacts  # noqa: E402
 from src.engine import scene_loader, sliding_window_predict  # noqa: E402
 from src.models import create_model  # noqa: E402
-from src.presence import pr_analysis, roc_analysis  # noqa: E402
+from src.presence import pr_analysis, roc_analysis, select_high_sensitivity_cutoff  # noqa: E402
 
 COMP = ROOT / "outputs" / "night_split" / "comparison"
 CLS = ROOT / "outputs" / "night_cascade"
 OUT = ROOT / "sprucebudworm_progress.github.io" / "assets" / "figures"
 OUT.mkdir(parents=True, exist_ok=True)
 THR = 0.15
+CLS_NAMES = {42: "cls_swin_tiny_bal", 43: "cls_swin_tiny_bal_s43", 44: "cls_swin_tiny_bal_s44",
+             45: "cls_swin_tiny_bal_s45", 46: "cls_swin_tiny_bal_s46"}
 
 
 def _device():
@@ -45,8 +48,7 @@ def score_swin(device) -> dict:
     base = load_base_config(ROOT / "configs" / "base_config_cascade_cls.yaml")
     manifest, norm = load_artifacts(base)
     records = {}
-    for seed in (43, 44, 45, 46):
-        name = f"cls_swin_tiny_bal_s{seed}"
+    for seed, name in CLS_NAMES.items():
         cfg = json.loads((CLS / "experiments" / f"{name}_config.json").read_text(encoding="utf-8"))
         cfg["model"]["pretrained"] = False
         result = json.loads((CLS / "experiments" / f"{name}_result.json").read_text(encoding="utf-8"))
@@ -109,19 +111,26 @@ def cascade(swin: dict) -> None:
     for name in ("night_base_attunet9_s42", "unet_night_s42"):
         rows[name] = [r for r in json.loads((COMP / f"{name}_samples.json").read_text(encoding="utf-8"))["samples"]
                       if r["split"] == "test"]
-    lines = ["model,gate,macro_dice,global_dice,kept_pos,rejected_pos"]
+    r_min = float(load_base_config(ROOT / "configs" / "base_config_night.yaml")["eval"]["cls_r_min"])
+    lines = ["model,classifier,operating_point,cls_threshold,macro_dice,global_dice,kept_pos,rejected_pos"]
     for seg, recs in rows.items():
         base_m, base_g = _gated(recs, {})
-        lines.append(f"{seg},none,{base_m:.4f},{base_g:.4f},{sum(int(r['label'])==1 for r in recs)},0")
+        n_pos = sum(int(r['label']) == 1 for r in recs)
+        lines.append(f"{seg},none,none,,{base_m:.4f},{base_g:.4f},{n_pos},0")
+        oracle = {int(r["ts"]): int(r["label"]) == 1 for r in recs}
+        om, og = _gated(recs, oracle)
+        lines.append(f"{seg},oracle,oracle,,{om:.4f},{og:.4f},{n_pos},0")
         for cls_name, pack in swin.items():
-            test = pack["splits"]["test"]
-            thr = pack["threshold"]
-            keep = {ts: sc >= thr for ts, sc in zip(test["ts"], test["score"])}
-            macro, glob = _gated(recs, keep)
-            pos = [ts for ts, y in zip(test["ts"], test["truth"]) if y == 1]
-            rejected = sum(1 for ts in pos if not keep[ts])
-            lines.append(f"{seg},{cls_name},{macro:.4f},{glob:.4f},{len(pos)-rejected},{rejected}")
-            print(lines[-1])
+            val, test = pack["splits"]["val"], pack["splits"]["test"]
+            high = float(select_high_sensitivity_cutoff(val["truth"], val["score"], r_min=r_min)["cutoff"])
+            for point, thr in (("youden", pack["threshold"]), (f"sens>={r_min:g}", high)):
+                keep = {ts: sc >= thr for ts, sc in zip(test["ts"], test["score"])}
+                macro, glob = _gated(recs, keep)
+                pos = [ts for ts, y in zip(test["ts"], test["truth"]) if y == 1]
+                rejected = sum(1 for ts in pos if not keep[ts])
+                lines.append(f"{seg},{cls_name},{point},{thr:.6g},{macro:.4f},{glob:.4f},"
+                             f"{len(pos)-rejected},{rejected}")
+                print(lines[-1])
     (COMP / "cascade_test.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

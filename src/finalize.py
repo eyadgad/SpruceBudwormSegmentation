@@ -77,6 +77,12 @@ def finalize_one(cfg: Dict, manifest, norm_stats, device, verbose: bool = True) 
     model.eval()
 
     threshold = float(train_result["calibrated_threshold"])
+    cls_t = train_result.get("calibrated_cls_threshold")
+    if str(cfg["eval"].get("gate", "off")) == "hard":
+        if cls_t is None:
+            raise SystemExit(f"{name}: hard gate but no calibrated_cls_threshold in {result_path}")
+        # evaluate_full_scene otherwise falls back to a 0.5 gate, not the locked one.
+        cfg = {**cfg, "eval": {**cfg["eval"], "cls_threshold": float(cls_t)}}
     test_rows = manifest[manifest["split"] == "test"].to_dict("records")
     if verbose:
         print(f"[finalize] {name}: {len(test_rows)} test scenes at frozen threshold {threshold}")
@@ -92,6 +98,8 @@ def finalize_one(cfg: Dict, manifest, norm_stats, device, verbose: bool = True) 
         with open(per_path, "w", encoding="utf-8") as f:
             json.dump(per_scene, f, indent=2, default=str)
     out["threshold_source"] = "calibrated on validation during training; not refit on test"
+    if str(cfg["eval"].get("gate", "off")) == "hard":
+        out["test_gate"] = {"gate": "hard", "cls_threshold": float(cfg["eval"]["cls_threshold"])}
     with open(final_path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, default=str)
     if verbose:

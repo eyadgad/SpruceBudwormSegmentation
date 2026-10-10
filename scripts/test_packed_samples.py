@@ -2,10 +2,11 @@
 
 Run before deleting the legacy PNGs:
 
-    python scripts/test_packed_samples.py --data-root ../Data \
-        --site-dir ../sprucebudworm_progress.github.io
+    python scripts/test_packed_samples.py
 
-After migration, add ``--skip-legacy`` for structural/raw-reflectivity checks.
+The raw-data and website roots default to the same paths as the exporter.
+After the PNG intermediates are deleted, add ``--skip-legacy`` for the
+structural and raw-reflectivity checks.
 """
 from __future__ import annotations
 
@@ -66,12 +67,20 @@ def metrics(probability: np.ndarray, gt: np.ndarray, threshold: float):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", type=Path, default=ROOT.parent / "Data")
-    ap.add_argument("--site-dir", type=Path, default=ROOT.parent / "sprucebudworm_progress.github.io")
-    ap.add_argument("--expected-scenes", type=int, default=615)
-    ap.add_argument("--max-mib", type=float, default=21.0)
+    ap.add_argument("--data-root", type=Path, default=ROOT / "Data")
+    ap.add_argument("--site-dir", type=Path, default=ROOT / "sprucebudworm_progress.github.io")
+    ap.add_argument("--expected-scenes", type=int, default=None,
+                    help="default: the frozen manifest's validation + test scan count")
+    ap.add_argument("--max-mib", type=float, default=None,
+                    help="default: the exporter's per-scene budget times the scene count")
     ap.add_argument("--skip-legacy", action="store_true")
     args = ap.parse_args()
+    if args.expected_scenes is None:
+        import pandas as pd
+        man = pd.read_csv(ROOT / "artifacts_night" / "manifest.csv")
+        args.expected_scenes = int(man.split.isin(["val", "test"]).sum())
+    if args.max_mib is None:
+        args.max_mib = export.MAX_ASSET_KIB_PER_SCENE * args.expected_scenes / 1024
 
     site = args.site_dir.resolve()
     sample_dir = site / "data" / "samples"

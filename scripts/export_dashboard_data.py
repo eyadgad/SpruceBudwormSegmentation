@@ -1,28 +1,26 @@
 """Generate every data asset the evaluation dashboard reads.
 
 The website is static (no server), so all analysis happens here and is written
-to ``sprucebudworm_progress.github.io/data/``. Nothing in the site is computed
-from placeholder values: every number traces back to the manifest, the cached
-targets, the experiment outputs under ``outputs/experiments``, or a forward pass
-of a trained checkpoint performed by this script.
+to ``sprucebudworm_progress.github.io/data/``. Frozen-split numbers come from
+``artifacts_night`` and ``outputs/night_*``. Old scan-level sweeps under
+``outputs/experiments`` are not exported.
 
 Stages (each can be run alone with --only):
-  experiments  57 experiment configs/metrics/histories + parsed training logs
+  experiments  current-era frozen-split configs/metrics/histories + training logs
   dataset      split / year / night / time / target-area distributions
-  predict      forward pass of available registered viewer models over val+test,
-               preserving validated records for registered models whose local
-               checkpoints are absent,
-               producing per-scene metrics, threshold sweeps, calibration
+  samples      GPU-free fallback: samples.json from comparison exports (no curves)
+  predict      forward pass of the four viewer models over the frozen val+test
+               scans, producing per-scene metrics, threshold sweeps, calibration
                histograms, connected components and radial error profiles
   presence     GPU-free scan/night presence analysis from samples.json and
                dataset.json, with validation-selected operating cutoffs
-  images       legacy PNG intermediates for probability/ground truth migration
+  images       PNG probability/ground-truth intermediates consumed by packs
+               (written in the same pass when run together with predict)
   packs        GPU-free SBW1 packs + WebP thumbnails for the sample explorer
 
 Run:
-  .venv\\Scripts\\python.exe scripts\\export_dashboard_data.py --only experiments,dataset
-  .venv\\Scripts\\python.exe scripts\\export_dashboard_data.py --only packs
-      --data-root ..\\Data --site-dir ..\\sprucebudworm_progress.github.io
+  .venv\\Scripts\\python.exe scripts\\export_dashboard_data.py
+      --only experiments,dataset,predict,images,presence,packs
 
 The raw-data and website roots default to those sibling paths, so the explicit
 options above are needed only when either checkout lives elsewhere.
@@ -46,23 +44,28 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-SITE = ROOT.parent / "sprucebudworm_progress.github.io"
+SITE = ROOT / "sprucebudworm_progress.github.io"
 DATA_OUT = SITE / "data"
 IMG_OUT = DATA_OUT / "samples"
+COMP = ROOT / "outputs" / "night_split" / "comparison"
+RUN_GROUPS = ("night_split", "night_cascade", "night_gated")
+EXP_DIRS = tuple(ROOT / "outputs" / g / "experiments" for g in RUN_GROUPS)
+ARTIFACTS = ROOT / "artifacts_night"
+MAX_ASSET_KIB_PER_SCENE = 40
 
 SBW_HEADER = struct.Struct("<4sHHBBBB")
 SBW_MAGIC = b"SBW1"
 SBW_FLAGS = 0x03  # bit 0: MSB-first packed GT; bit 1: categorical reflectivity
 SBW_VERSION_PREFIX = "sbw1-max6-v1"
 VIEWER_MODELS = (
-    {"key": "attunet9", "name": "sweep_attunet_dbz0_e012345678_focaltv",
-     "disp": "Attention UNet (9 elev)"},
-    {"key": "unetpp9", "name": "sweep_unetpp_dbz0_e012345678_focaltv",
-     "disp": "UNet++ (9 elev)"},
-    {"key": "attunet7", "name": "sweep_attunet_dbz0_e0123456_focaltv",
-     "disp": "Attention UNet (7 elev)"},
-    {"key": "attunet8", "name": "sweep_attunet_dbz0_e01234567_focaltv",
-     "disp": "Attention UNet (8 elev)"},
+    {"key": "attunet9", "name": "night_base_attunet9_s42",
+     "disp": "Attention U-Net s42", "thr": 0.15},
+    {"key": "unet", "name": "unet_night_s42",
+     "disp": "U-Net s42", "thr": 0.15},
+    {"key": "attunet43", "name": "night_base_attunet9_s43",
+     "disp": "Attention U-Net s43", "thr": 0.15},
+    {"key": "unet43", "name": "unet_night_s43",
+     "disp": "U-Net s43", "thr": 0.15},
 )
 VIEWER_MODEL_KEYS = tuple(m["key"] for m in VIEWER_MODELS)
 REFLECTIVITY_BINS = (-1.0, 2.0, 7.0, 12.0, 19.0)
@@ -152,64 +155,74 @@ def parse_log(path: Path) -> Dict:
 
 def stage_experiments() -> None:
     print("[experiments]")
-    exp_dir = ROOT / "outputs" / "experiments"
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from era_guard import is_current_era
     rows, histories = [], {}
-    for res_path in sorted(exp_dir.glob("*_result.json")):
-        name = res_path.name[: -len("_result.json")]
-        res = json.loads(res_path.read_text(encoding="utf-8"))
-        cfg_path = exp_dir / f"{name}_config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-        log = parse_log(exp_dir / f"{name}_train.log")
-        t = res.get("test_full_scene", {}) or {}
-
-        hp = cfg.get("train", {})
-        tgt = cfg.get("target", {})
-        chans = res.get("channels", cfg.get("channels", []))
-        n_elev = sum(1 for c in chans if c.startswith("th_e"))
-        rows.append({
-            "name": name,
-            "model": res.get("model"),
-            "loss": res.get("loss"),
-            "target_mode": tgt.get("mode"),
-            "dbz_threshold": _num(tgt.get("dbz_threshold")),
-            "channels": chans,
-            "n_channels": res.get("n_channels", len(chans)),
-            "n_elev": n_elev,
-            "has_dem": "dem" in chans,
-            "has_beam": any(c.startswith("bh_e") for c in chans),
-            "n_params": res.get("n_params"),
-            "best_val_dice_patch": _r(res.get("best_val_dice_patch")),
-            "best_epoch": res.get("best_epoch"),
-            "epochs_budget": hp.get("epochs"),
-            "lr": _num(hp.get("lr")),
-            "batch_size": hp.get("batch_size"),
-            "accum_steps": hp.get("accum_steps"),
-            "patch_size": (cfg.get("patch") or {}).get("size"),
-            "patches_per_image": (cfg.get("patch") or {}).get("patches_per_image"),
-            "threshold": _num(res.get("calibrated_threshold")),
-            "train_seconds": log["train_seconds"],
-            "sec_per_epoch": (int(np.median(log["epoch_seconds"])) if log["epoch_seconds"] else None),
-            "n_epochs_run": len(log["epoch_seconds"]) or None,
-            # held-out test, full-scene
-            "dice": _r(t.get("dice")), "dice_micro": _r(t.get("dice_micro")),
-            "iou": _r(t.get("iou")), "iou_micro": _r(t.get("iou_micro")),
-            "precision": _r(t.get("precision")), "recall": _r(t.get("recall")),
-            "f1": _r(t.get("f1")), "accuracy": _r(t.get("accuracy")),
-            "boundary_iou": _r(t.get("boundary_iou")), "nsd": _r(t.get("nsd")),
-            "hd95": _r(t.get("hd95"), 2), "assd": _r(t.get("assd"), 2),
-            "bg_fp_rate": _r(t.get("bg_fp_rate"), 6),
-            "n_pos_scenes": t.get("n_pos_scenes"), "n_neg_scenes": t.get("n_neg_scenes"),
-            "selected": name == SELECTED,
-        })
-
-        h_path = exp_dir / f"{name}_history.csv"
-        if h_path.exists():
-            h = pd.read_csv(h_path)
-            keep = [c for c in ["epoch", "train_loss", "lr", "val_dice", "val_iou",
-                                "val_precision", "val_recall", "val_accuracy"] if c in h.columns]
-            hh = {c: [_r(v, 5) for v in h[c].tolist()] for c in keep}
-            hh["sec_per_epoch"] = log["epoch_seconds"] or None
-            histories[name] = hh
+    for exp_dir in EXP_DIRS:
+        if not exp_dir.is_dir():
+            continue
+        for res_path in sorted(exp_dir.glob("*_result.json")):
+            if res_path.name.endswith("_final_result.json"):
+                continue
+            name = res_path.name[: -len("_result.json")]
+            cfg_path = exp_dir / f"{name}_config.json"
+            if cfg_path.exists() and not is_current_era(cfg_path):
+                continue
+            final_path = exp_dir / f"{name}_final_result.json"
+            res = json.loads((final_path if final_path.exists() else res_path).read_text(encoding="utf-8"))
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+            log = parse_log(exp_dir / f"{name}_train.log")
+            t = res.get("test_full_scene") or res.get("val_full_scene") or {}
+            eval_split = ("test" if res.get("test_full_scene") else
+                          "val" if res.get("val_full_scene") else None)
+            hp = cfg.get("train", {})
+            tgt = cfg.get("target", {})
+            chans = res.get("channels", cfg.get("channels", []))
+            n_elev = sum(1 for c in chans if c.startswith("th_e"))
+            rows.append({
+                "name": name,
+                "model": res.get("model"),
+                "loss": res.get("loss"),
+                "target_mode": tgt.get("mode"),
+                "dbz_threshold": _num(tgt.get("dbz_threshold")),
+                "channels": chans,
+                "n_channels": res.get("n_channels", len(chans)),
+                "n_elev": n_elev,
+                "has_dem": "dem" in chans,
+                "has_beam": any(c.startswith("bh_e") for c in chans),
+                "n_params": res.get("n_params"),
+                "best_val_dice_patch": _r(res.get("best_val_dice_patch")),
+                "best_epoch": res.get("best_epoch"),
+                "epochs_budget": hp.get("epochs"),
+                "lr": _num(hp.get("lr")),
+                "batch_size": hp.get("batch_size"),
+                "accum_steps": hp.get("accum_steps"),
+                "patch_size": (cfg.get("patch") or {}).get("size"),
+                "patches_per_image": (cfg.get("patch") or {}).get("patches_per_image"),
+                "threshold": _num(res.get("calibrated_threshold")),
+                "train_seconds": log["train_seconds"],
+                "sec_per_epoch": (int(np.median(log["epoch_seconds"])) if log["epoch_seconds"] else None),
+                "n_epochs_run": len(log["epoch_seconds"]) or None,
+                # 6 dp so the site's 3-dp display rounds the true value, not a 4-dp rounding of it.
+                "dice": _r(t.get("dice"), 6), "dice_micro": _r(t.get("dice_micro"), 6),
+                "iou": _r(t.get("iou"), 6), "iou_micro": _r(t.get("iou_micro"), 6),
+                "precision": _r(t.get("precision"), 6), "recall": _r(t.get("recall"), 6),
+                "f1": _r(t.get("f1"), 6), "accuracy": _r(t.get("accuracy"), 6),
+                "boundary_iou": _r(t.get("boundary_iou"), 6), "nsd": _r(t.get("nsd"), 6),
+                "hd95": _r(t.get("hd95"), 2), "assd": _r(t.get("assd"), 2),
+                "bg_fp_rate": _r(t.get("bg_fp_rate"), 6),
+                "n_pos_scenes": t.get("n_pos_scenes"), "n_neg_scenes": t.get("n_neg_scenes"),
+                "eval_split": eval_split,
+                "selected": name == SELECTED,
+            })
+            h_path = exp_dir / f"{name}_history.csv"
+            if h_path.exists():
+                h = pd.read_csv(h_path)
+                keep = [c for c in ["epoch", "train_loss", "lr", "val_dice", "val_iou",
+                                    "val_precision", "val_recall", "val_accuracy"] if c in h.columns]
+                hh = {c: [_r(v, 5) for v in h[c].tolist()] for c in keep}
+                hh["sec_per_epoch"] = log["epoch_seconds"] or None
+                histories[name] = hh
 
     _w("experiments.json", {"generated": datetime.now().isoformat(timespec="seconds"),
                             "selected": SELECTED, "compare": COMPARE,
@@ -225,8 +238,8 @@ def stage_dataset() -> None:
     print("[dataset]")
     from src import config as cfgmod, paths
 
-    base = cfgmod.load_base_config(str(ROOT / "configs" / "base_config.yaml"))
-    man = pd.read_csv(ROOT / "artifacts" / "manifest.csv")
+    base = cfgmod.load_base_config(str(ROOT / "configs" / "base_config_night.yaml"))
+    man = pd.read_csv(ROOT / "artifacts_night" / "manifest.csv")
     man["hour"] = (man.timestamp % 10000) // 100
     man["date"] = man.timestamp // 10000
 
@@ -268,8 +281,7 @@ def stage_dataset() -> None:
             "pos_frac": (_r(a["dbz0"] / npx, 6) if a.get("dbz0") is not None else None),
         })
 
-    # night leakage across splits: the manifest is split by year/scene, not by
-    # night, so nights can span splits. This is measured, not assumed.
+    # Night-disjoint split: leakage counts should be zero. Still measured.
     p = man[man.label == 1]
     by_night = p.groupby("night")["split"].agg(lambda s: sorted(set(s)))
     train_nights = set(p[p.split == "train"].night)
@@ -283,7 +295,7 @@ def stage_dataset() -> None:
         "val_scenes_total": int(p[p.split == "val"].shape[0]),
     }
 
-    split_summary = json.loads((ROOT / "artifacts" / "split_summary.json").read_text())
+    split_summary = json.loads((ROOT / "artifacts_night" / "split_summary.json").read_text())
     from src.channels import GRID
     grid = dict(GRID)
     _w("dataset.json", {
@@ -302,6 +314,103 @@ def stage_dataset() -> None:
         "years": sorted({s["year"] for s in scenes}),
     })
     print(f"  {len(scenes)} scenes, {len(areas)} target areas")
+
+
+def stage_samples_from_comparison() -> None:
+    """Assemble viewer samples.json from frozen-split comparison exports (no GPU)."""
+    print("[samples-from-comparison]")
+    ds = json.loads((DATA_OUT / "dataset.json").read_text(encoding="utf-8"))
+    by_ts = {int(s["ts"]): s for s in ds["scenes"]}
+    per_model = []
+    for spec in VIEWER_MODELS:
+        p = COMP / f"{spec['name']}_samples.json"
+        if not p.exists():
+            raise SystemExit(f"missing {p}")
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        per_model.append((spec, {int(s["ts"]): s for s in doc["samples"]}))
+        print(f"  {spec['key']} <- {p.name} n={len(doc['samples'])}")
+    timestamps = sorted(per_model[0][1].keys())
+    for spec, idx in per_model[1:]:
+        if sorted(idx.keys()) != timestamps:
+            raise SystemExit(f"{spec['name']} timestamps do not match {VIEWER_MODELS[0]['name']}")
+    samples = []
+    for ts in timestamps:
+        meta = by_ts.get(ts, {})
+        row0 = per_model[0][1][ts]
+        rec = {
+            "ts": ts,
+            "split": row0.get("split") or meta.get("split"),
+            "label": int(row0.get("label", meta.get("label", 0))),
+            "year": int(row0.get("year") or meta.get("year") or 0),
+            "night": row0.get("night") or meta.get("night") or "",
+            "hour": int(meta.get("hour") or ((ts % 10000) // 100)),
+            "thr": float(row0.get("thr") or 0.15),
+            "tp": int(row0.get("tp") or 0),
+            "fp": int(row0.get("fp") or 0),
+            "fn": int(row0.get("fn") or 0),
+            "tn": int(row0.get("tn") or 0),
+            "gt_area": int(row0.get("gt_area") or 0),
+            "pred_area": int(row0.get("pred_area") or 0),
+            "bg_fp_rate": row0.get("bg_fp_rate"),
+            "models": {},
+        }
+        for spec, idx in per_model:
+            s = idx[ts]
+            rec["models"][spec["key"]] = {
+                "pred_area": int(s.get("pred_area") or 0),
+                "bg_fp_rate": s.get("bg_fp_rate"),
+                "dice": s.get("dice"),
+                "iou": s.get("iou"),
+                "precision": s.get("precision"),
+                "recall": s.get("recall"),
+                "nsd": s.get("nsd"),
+                "tp": s.get("tp"),
+                "fp": s.get("fp"),
+                "fn": s.get("fn"),
+            }
+            if spec["key"] == "attunet9":
+                for k in ("dice", "iou", "precision", "recall", "boundary_iou", "nsd",
+                          "hd95", "assd", "bf1", "bf1_fuzzy"):
+                    if s.get(k) is not None:
+                        rec[k] = s[k]
+        rec["pred_area_cmp"] = rec["models"]["unet"]["pred_area"]
+        rec["bg_fp_rate_cmp"] = rec["models"]["unet"].get("bg_fp_rate")
+        samples.append(rec)
+    n_test = sum(1 for s in samples if s["split"] == "test")
+    n_val = sum(1 for s in samples if s["split"] == "val")
+    _w("samples.json", {
+        "generated": datetime.now().isoformat(timespec="seconds"),
+        "selected": SELECTED,
+        "compare": COMPARE,
+        "threshold": 0.15,
+        "threshold_cmp": 0.15,
+        "model_name_sel": VIEWER_MODELS[0]["disp"],
+        "model_name_cmp": VIEWER_MODELS[1]["disp"],
+        "models": VIEWER_MODELS,
+        "image_splits": [],
+        "split_protocol": "night-disjoint artifacts_night",
+        "n_val": n_val,
+        "n_test": n_test,
+        "samples": samples,
+    })
+    # Locked-threshold curves only (full probability sweep needs GPU predict).
+    def _curve(split):
+        pos = [s for s in samples if s["split"] == split and s["label"] == 1]
+        if not pos:
+            return []
+        dice = float(np.nanmean([s["dice"] for s in pos if s.get("dice") is not None]))
+        tp = sum(s["tp"] for s in pos); fp = sum(s["fp"] for s in pos); fn = sum(s["fn"] for s in pos)
+        return [{"t": 0.15, "dice_macro": _r(dice),
+                 "dice_micro": _r(2 * tp / (2 * tp + fp + fn + 1e-8)),
+                 "precision": _r(tp / (tp + fp + 1e-8)),
+                 "recall": _r(tp / (tp + fn + 1e-8)), "n": len(pos)}]
+    _w("threshold.json", {
+        "selected_threshold": 0.15,
+        "swept": [0.15],
+        "curves": {"test": _curve("test"), "val": _curve("val")},
+        "note": "full probability sweep omitted until GPU predict on the night split",
+    })
+    print(f"  {len(samples)} scenes (val {n_val}, test {n_test})")
 
 
 # --------------------------------------------------------------------------
@@ -327,24 +436,58 @@ def _components(mask: np.ndarray, min_size: int = 10):
     return int(len(sizes)), sorted(int(s) for s in sizes)
 
 
+def _run_group(name: str, root: Path | None = None) -> str:
+    """Output group (night_split / night_cascade / night_gated) holding a run."""
+    root = Path(root) if root is not None else ROOT
+    hits = [g for g in RUN_GROUPS
+            if (root / "outputs" / g / "experiments" / f"{name}_config.json").exists()]
+    if len(hits) != 1:
+        raise SystemExit(f"{name}: expected one frozen-split config, found {hits}")
+    return hits[0]
+
+
+def _check_frozen_manifest() -> None:
+    pinned = (ARTIFACTS / "manifest.sha256").read_text(encoding="utf-8").strip()
+    got = hashlib.sha256((ARTIFACTS / "manifest.csv").read_bytes()).hexdigest()
+    if got != pinned:
+        raise SystemExit(f"MANIFEST MISMATCH: artifacts_night/manifest.csv {got} != pinned {pinned}")
+
+
 def _load_model(name, device, required: bool = True):
-    from src import checkpoint as ckpt, config as cfgmod, paths
+    """Frozen-split run: its saved training config, best weights and locked threshold."""
+    from src import checkpoint as ckpt, paths
     from src.models import create_model
-    base = cfgmod.load_base_config(str(ROOT / "configs" / "base_config.yaml"))
-    exps = cfgmod.load_experiments(str(ROOT / "configs" / "experiments_elev.yaml"))
-    exp = next(e for e in exps if e["name"] == name)
-    cfg = cfgmod.resolve_experiment(base, exp)
-    st = ckpt.load_checkpoint(ckpt.best_path(paths.checkpoint_dir(base), name), device)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from era_guard import is_current_era
+    exp_dir = ROOT / "outputs" / _run_group(name) / "experiments"
+    cfg_path = exp_dir / f"{name}_config.json"
+    if not is_current_era(cfg_path):
+        raise SystemExit(f"{name} was not trained on the frozen night split")
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    threshold = float(json.loads((exp_dir / f"{name}_result.json").read_text(
+        encoding="utf-8"))["calibrated_threshold"])
+    st = ckpt.load_checkpoint(ckpt.best_path(paths.checkpoint_dir(cfg), name), device)
     if st is None:
         if required:
             raise SystemExit(f"no checkpoint for {name}")
-        res = json.loads((ROOT / "outputs" / "experiments" / f"{name}_result.json").read_text())
-        return None, cfg, float(res["calibrated_threshold"])
+        return None, cfg, threshold
     m = create_model(cfg).to(device)
     m.load_state_dict(st["model"])
     m.eval()
-    res = json.loads((ROOT / "outputs" / "experiments" / f"{name}_result.json").read_text())
-    return m, cfg, float(res["calibrated_threshold"])
+    return m, cfg, threshold
+
+
+def _shared_input_cfg(loaded_models):
+    """One scene load serves every viewer model only if their inputs are identical."""
+    cfgs = [cfg for _spec, _model, cfg, _thr in loaded_models]
+    keys = ("channels", "target", "data", "temporal")
+    for cfg in cfgs[1:]:
+        for k in keys:
+            if cfg.get(k) != cfgs[0].get(k):
+                raise SystemExit(f"viewer models differ in {k!r}; cannot share scene inputs")
+    if (cfgs[0].get("temporal") or {}).get("enabled"):
+        raise SystemExit("temporal viewer models are not supported by the sample explorer")
+    return cfgs[0]
 
 
 def _prediction_metrics(prob: np.ndarray, truth: np.ndarray, threshold: float,
@@ -418,14 +561,14 @@ def _validate_preserved_model_lineage(previous: Dict, reused_models,
                              f"{spec['name']!r}/{float(threshold)!r}")
 
 
-def stage_predict(splits=("test", "val"), limit=None) -> None:
-    print("[predict]")
+def stage_predict(splits=("test", "val"), limit=None, write_images: bool = False,
+                  size: int = 480) -> None:
+    print("[predict]" + (" + images" if write_images else ""))
     import torch
-    from src import data_prep, dataset as dsmod, engine, metrics as M, config as cfgmod
+    from src import data_prep, dataset as dsmod, engine, metrics as M
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    base = cfgmod.load_base_config(str(ROOT / "configs" / "base_config.yaml"))
-    man, norm = data_prep.load_artifacts(base)
+    _check_frozen_manifest()
 
     previous = {}
     samples_path = DATA_OUT / "samples.json"
@@ -441,6 +584,10 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
         print(f"  {spec['key']}={spec['name']} thr={threshold} [{source}]")
     if any(model is None for _spec, model, _cfg, _threshold in loaded_models[:2]):
         raise SystemExit("the selected and comparison checkpoints are required by stage predict")
+    if write_images and any(model is None for _spec, model, _cfg, _t in loaded_models):
+        raise SystemExit("image layers need every viewer checkpoint")
+    input_cfg = _shared_input_cfg(loaded_models)
+    man, norm = data_prep.load_artifacts(input_cfg)
     current_model_version = _model_artifact_version()
     reused_models = [(spec, threshold) for spec, model, _cfg, threshold in loaded_models
                      if model is None]
@@ -473,6 +620,8 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
         model_values: Dict[str, Dict] = {}
         probabilities: Dict[str, np.ndarray] = {}
         predictions: Dict[str, np.ndarray] = {}
+        x, y = dsmod.load_full_scene(input_cfg, r, norm)
+        yb = y.astype(bool)
         for spec, model, cfg, threshold in loaded_models:
             if model is None:
                 old = (previous_by_ts.get(int(r["timestamp"]), {}).get("models") or {}).get(spec["key"])
@@ -480,19 +629,23 @@ def stage_predict(splits=("test", "val"), limit=None) -> None:
                     raise SystemExit(f"no checkpoint or preserved metrics for {spec['key']} / {r['timestamp']}")
                 model_values[spec["key"]] = old
                 continue
-            x, y = dsmod.load_full_scene(cfg, r, norm)
-            candidate_truth = y.astype(bool)
-            if yb is None:
-                yb = candidate_truth
-            elif not np.array_equal(yb, candidate_truth):
-                raise RuntimeError(f"target mismatch across viewer models for {r['timestamp']}")
             ps = int(cfg["patch"]["size"])
             ov = float(cfg["eval"].get("overlap", 0.5))
-            prob_i = engine.sliding_window_predict(model, x, device, ps, ov, False, gaussian=True)
+            prob_i = engine.sliding_window_predict(
+                model, x, device, ps, ov, bool(cfg["eval"].get("tta", False)),
+                gaussian=bool(cfg["eval"].get("gaussian_window", True)))
             values, pred_i = _prediction_metrics(prob_i, yb, threshold, is_pos, M)
             probabilities[spec["key"]] = prob_i
             predictions[spec["key"]] = pred_i
             model_values[spec["key"]] = values
+
+        if write_images:
+            ts_i = int(r["timestamp"])
+            for key in VIEWER_MODEL_KEYS:
+                _to_png((_downsample(probabilities[key], size) * 255).astype(np.uint8),
+                        IMG_OUT / f"{ts_i}_prob_{key}.png")
+            truth_s = _downsample(yb.astype(np.float32), size).astype(bool)
+            _to_png(truth_s.astype(np.uint8) * 255, IMG_OUT / f"{ts_i}_gt.png")
 
         prob = probabilities[VIEWER_MODEL_KEYS[0]]
         pred = predictions[VIEWER_MODEL_KEYS[0]]
@@ -796,9 +949,9 @@ def _model_artifact_version(root: Path | None = None,
     viewer_models = tuple(viewer_models) if viewer_models is not None else VIEWER_MODELS
     digest = hashlib.sha256()
     paths = [
-        root / "configs" / "base_config.yaml",
-        root / "configs" / "experiments_elev.yaml",
-        root / "artifacts" / "norm_stats.json",
+        root / "configs" / "base_config_night.yaml",
+        root / "artifacts_night" / "manifest.csv",
+        root / "artifacts_night" / "norm_stats.json",
         root / "src" / "channels.py",
         root / "src" / "config.py",
         root / "src" / "checkpoint.py",
@@ -811,9 +964,11 @@ def _model_artifact_version(root: Path | None = None,
                         key=lambda p: p.as_posix()))
     for spec in viewer_models:
         digest.update(json.dumps(spec, sort_keys=True).encode("utf-8"))
+        group = root / "outputs" / _run_group(spec["name"], root)
         paths.extend([
-            root / "outputs" / "experiments" / f"{spec['name']}_result.json",
-            root / "outputs" / "checkpoints" / f"{spec['name']}_best.pt",
+            group / "experiments" / f"{spec['name']}_config.json",
+            group / "experiments" / f"{spec['name']}_result.json",
+            group / "checkpoints" / f"{spec['name']}_best.pt",
         ])
     for path in paths:
         try:
@@ -848,7 +1003,7 @@ def _write_thumbnail(path: Path, reflectivity: np.ndarray, probability: np.ndarr
 
 
 def stage_packs(data_root: Path | str, size: int = 480, thumb: int = 120,
-                expected_scenes: int = 615, limit: int | None = None) -> None:
+                expected_scenes: int | None = None, limit: int | None = None) -> None:
     """Migrate exact PNG probability/GT bytes into per-scene SBW1 gzip packs.
 
     Reflectivity is regenerated from the raw radar volumes as the per-cell
@@ -862,6 +1017,8 @@ def stage_packs(data_root: Path | str, size: int = 480, thumb: int = 120,
     doc = json.loads(samples_path.read_text(encoding="utf-8"))
     samples = doc.get("samples") or []
     timestamps = [int(s["ts"]) for s in samples]
+    if expected_scenes is None:
+        expected_scenes = len(set(timestamps))
     if len(samples) != expected_scenes or len(set(timestamps)) != expected_scenes:
         raise SystemExit(f"samples.json must contain exactly {expected_scenes} unique scenes; "
                          f"got {len(samples)} rows / {len(set(timestamps))} unique")
@@ -905,6 +1062,14 @@ def stage_packs(data_root: Path | str, size: int = 480, thumb: int = 120,
                          f"legacy PNG sets missing for {legacy_missing} scenes and packs missing for {pack_missing}")
     print(f"  probability/GT source: {source}")
 
+    if not limit:
+        keep = set(timestamps)
+        stale = [p for pattern in ("*.sbw.gz", "*.webp") for p in IMG_OUT.glob(pattern)
+                 if int(p.name.split(".")[0]) not in keep]
+        for p in stale:
+            p.unlink()
+        print(f"  removed {len(stale)} packs/thumbnails for scenes outside samples.json")
+
     for i, sample in enumerate(todo, 1):
         ts = int(sample["ts"])
         if legacy_complete:
@@ -936,8 +1101,11 @@ def stage_packs(data_root: Path | str, size: int = 480, thumb: int = 120,
     if len(pack_files) != expected_scenes or len(thumb_files) != expected_scenes:
         raise RuntimeError(f"expected {expected_scenes} packs and thumbnails; "
                            f"got {len(pack_files)} packs / {len(thumb_files)} thumbnails")
-    if total > 21 * 1024 * 1024:
-        raise RuntimeError(f"packed sample assets use {total / 1024 / 1024:.2f} MiB; limit is 21 MiB")
+    budget = MAX_ASSET_KIB_PER_SCENE * 1024 * expected_scenes
+    if total > budget:
+        raise RuntimeError(f"packed sample assets use {total / 1024 / 1024:.2f} MiB; "
+                           f"budget is {budget / 1024 / 1024:.2f} MiB "
+                           f"({MAX_ASSET_KIB_PER_SCENE} KiB x {expected_scenes} scenes)")
     version = _asset_version(pack_files + thumb_files)
 
     doc["image_splits"] = sorted({str(s["split"]) for s in samples})
@@ -976,11 +1144,9 @@ def stage_images(size=480, thumb=120, splits=("test", "val"), limit=None) -> Non
     """
     print("[images]")
     import torch
-    from src import data_prep, dataset as dsmod, engine, config as cfgmod
+    from src import data_prep, dataset as dsmod, engine
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    base = cfgmod.load_base_config(str(ROOT / "configs" / "base_config.yaml"))
-    man, norm = data_prep.load_artifacts(base)
     loaded_models = []
     for spec in VIEWER_MODELS:
         model, cfg, threshold = _load_model(spec["name"], device, required=False)
@@ -998,6 +1164,7 @@ def stage_images(size=480, thumb=120, splits=("test", "val"), limit=None) -> Non
         _validate_preserved_model_lineage(
             previous, reused_models, _model_artifact_version())
 
+    man, norm = data_prep.load_artifacts(loaded_models[0][2])
     rows = man[man.split.isin(splits)].to_dict("records")
     if limit:
         rows = rows[:limit]
@@ -1055,9 +1222,9 @@ def main():
     ap.add_argument("--only", default="experiments,dataset,predict,presence")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--img-splits", default="test,val")
-    ap.add_argument("--data-root", type=Path, default=ROOT.parent / "Data",
-                    help="Raw radar root used by the GPU-free packs stage (default: ../Data)")
-    ap.add_argument("--site-dir", type=Path, default=ROOT.parent / "sprucebudworm_progress.github.io",
+    ap.add_argument("--data-root", type=Path, default=ROOT / "Data",
+                    help="Raw radar root used by the GPU-free packs stage")
+    ap.add_argument("--site-dir", type=Path, default=ROOT / "sprucebudworm_progress.github.io",
                     help="Website checkout that receives generated data")
     args = ap.parse_args()
     configure_site(args.site_dir)
@@ -1067,11 +1234,14 @@ def main():
         stage_experiments()
     if "dataset" in todo:
         stage_dataset()
+    if "samples" in todo:
+        stage_samples_from_comparison()
+    images_with_predict = "predict" in todo and "images" in todo
     if "predict" in todo:
-        stage_predict(limit=args.limit)
+        stage_predict(limit=args.limit, write_images=images_with_predict)
     if "presence" in todo:
         stage_presence()
-    if "images" in todo:
+    if "images" in todo and not images_with_predict:
         stage_images(splits=tuple(args.img_splits.split(",")), limit=args.limit)
     if "packs" in todo:
         stage_packs(args.data_root, limit=args.limit)

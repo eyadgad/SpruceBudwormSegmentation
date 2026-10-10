@@ -3,8 +3,10 @@
 Writes PNG and PDF next to the evaluation site. The figures are the ones the
 publication export was built to support: the five-seed aggregate, the
 pre-specified paired test, the NSD-versus-tolerance curve with a
-night-clustered band, and scan/night ROC and precision-recall (AUPRC) for the
-segmented-area score under max and mean night aggregation.
+night-clustered band, scan/night ROC and precision-recall (AUPRC) for the
+segmented-area score under max and mean night aggregation, and skill by plume
+size. Also prints the pooled detection scores and the oracle gate, and writes
+the test table of the extra runs listed in FROZEN.md.
 """
 from __future__ import annotations
 
@@ -319,6 +321,101 @@ def fig_year(cache) -> None:
     _save(fig, "fig6_year")
 
 
+CELL_KM2 = 0.25  # one 500 m grid cell
+
+
+def fig_size(cache) -> None:
+    """Test macro Dice by quartile of labelled area (equal-count bins on the test positives)."""
+    import pandas as pd
+    ref = {int(r["ts"]): r for r in _pos(cache["attn"][42], "test")}
+    area = pd.Series({ts: r["gt_area"] for ts, r in ref.items()})
+    quart = pd.qcut(area, 4, labels=False)
+    bins = [sorted(area.index[quart == q]) for q in range(4)]
+    labels = [f"{area[b].min() * CELL_KM2:,.0f}–{area[b].max() * CELL_KM2:,.0f}" for b in bins]
+    fig, ax = plt.subplots(figsize=(7.1, 3.2))
+    x = np.arange(4)
+    w = 0.34
+    for shift, fam, color, label in ((-w / 2, "attn", ATTN, "Attention U-Net"),
+                                     (w / 2, "unet", UNET, "U-Net")):
+        per_seed = []
+        for seed in SEEDS:
+            rows = {int(r["ts"]): r for r in _pos(cache[fam][seed], "test")}
+            per_seed.append([float(np.mean([rows[ts]["dice"] for ts in b])) for b in bins])
+        per_seed = np.asarray(per_seed)
+        m, sd = per_seed.mean(axis=0), per_seed.std(axis=0, ddof=1)
+        ax.bar(x + shift, m, w, yerr=sd, color=color, ecolor=INK, capsize=2.5,
+               error_kw={"linewidth": 0.7, "capthick": 0.7}, label=label, zorder=2)
+        for q in range(4):
+            print(f"size Q{q + 1} n={len(bins[q])} {labels[q]} km2 {fam} {m[q]:.3f} ± {sd[q]:.3f}")
+    ax.set_xticks(x, [f"Q{q + 1}\n{labels[q]} km²\nn={len(bins[q])}" for q in range(4)])
+    ax.set_ylabel("Test macro Dice")
+    ax.set_ylim(0, 0.9)
+    ax.legend(frameon=False, loc="upper left")
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, color="#e6e6e6", linewidth=0.6, zorder=0)
+    _save(fig, "fig8_size")
+
+
+def detection_scores(cache) -> None:
+    """Pooled POD, FAR and CSI on the positive test scans, mean ± SD over seeds."""
+    for fam in ("attn", "unet"):
+        pod, far, csi = [], [], []
+        for seed in SEEDS:
+            rows = _pos(cache[fam][seed], "test")
+            tp = sum(r["tp"] for r in rows)
+            fp = sum(r["fp"] for r in rows)
+            fn = sum(r["fn"] for r in rows)
+            pod.append(tp / (tp + fn))
+            far.append(fp / (tp + fp))
+            csi.append(tp / (tp + fp + fn))
+        print(f"detection {fam} POD {np.mean(pod):.3f} ± {np.std(pod, ddof=1):.3f} "
+              f"FAR {np.mean(far):.3f} ± {np.std(far, ddof=1):.3f} "
+              f"CSI {np.mean(csi):.3f} ± {np.std(csi, ddof=1):.3f}")
+
+
+EXTRAS = (
+    ("S1 night-balanced", "night_split", "night_bal_attunet9_cur"),
+    ("S2 + presence head", "night_split", "night_mtl_attunet9_cur"),
+    ("S3a + temporal stack", "night_split", "night_tstack_attunet9_cur"),
+    ("S3b + L-TAE", "night_split", "night_ltae_attunet9_cur"),
+    ("Gated Attention U-Net", "night_cascade", "gated_attn_unet_cur"),
+    ("TransUNet", "night_gated", "transunet_night"),
+    ("Gated Swin-Attention", "night_gated", "gated_swin_attn_night"),
+    ("Swin-UNet", "night_gated", "swin_unet_night"),
+)
+
+
+def extras() -> None:
+    """Frozen single-seed runs on test, paired against Attention U-Net seed 42."""
+    def run(group, name):
+        exp = ROOT / "outputs" / group / "experiments"
+        final = json.loads((exp / f"{name}_final_result.json").read_text(encoding="utf-8"))
+        per = json.loads((exp / f"{name}_test_per_scene.json").read_text(encoding="utf-8"))
+        return final, {int(r["ts"]): r for r in per if int(r["label"]) == 1}
+
+    s0, s0_pos = run("night_split", "night_base_attunet9_s42")
+    lines = ["run,name,threshold,val_dice,test_dice,d_dice,d_dice_lo,d_dice_hi,"
+             "test_nsd,d_nsd,d_nsd_lo,d_nsd_hi,test_far_scan"]
+    t0 = s0["test_full_scene"]
+    lines.append(f"S0 Attention U-Net s42,night_base_attunet9_s42,{s0['calibrated_threshold']},"
+                 f"{s0['val_full_scene']['dice']:.6f},{t0['dice']:.6f},,,,{t0['nsd']:.6f},,,,"
+                 f"{t0['far_scan']:.6f}")
+    for label, group, name in EXTRAS:
+        final, pos = run(group, name)
+        common = sorted(set(pos) & set(s0_pos))
+        nights = [pos[ts]["night"] for ts in common]
+        d = {k: paired_cluster_bootstrap([pos[ts][k] for ts in common],
+                                         [s0_pos[ts][k] for ts in common], nights)
+             for k in ("dice", "nsd")}
+        t = final["test_full_scene"]
+        lines.append(f"{label},{name},{final['calibrated_threshold']},{final['val_full_scene']['dice']:.6f},"
+                     f"{t['dice']:.6f},{d['dice']['point']:.6f},{d['dice']['lo']:.6f},{d['dice']['hi']:.6f},"
+                     f"{t['nsd']:.6f},{d['nsd']['point']:.6f},{d['nsd']['lo']:.6f},{d['nsd']['hi']:.6f},"
+                     f"{t['far_scan']:.6f}")
+        print("extras", lines[-1])
+    (COMP / "extras_test.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     cache = {
         "attn": {s: _samples(f"night_base_attunet9_s{s}") for s in SEEDS},
@@ -330,7 +427,10 @@ def main() -> None:
     fig_nsd(cache)
     fig_year(cache)
     fig_presence()
+    fig_size(cache)
+    detection_scores(cache)
     oracle(cache)
+    extras()
     print(f"[done] {OUT}")
 
 

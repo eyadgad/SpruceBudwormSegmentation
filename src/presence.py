@@ -382,6 +382,31 @@ def _count_truth(rows: Iterable[Mapping]) -> Dict[str, int]:
     return {"total": len(rows), "positive": pos, "negative": len(rows) - pos}
 
 
+def _split_caveats(cohort: Mapping) -> List[str]:
+    """Split-design caveats stated from the measured night overlap and coverage."""
+    ov = cohort["night_overlap"]
+    if ov["nights_in_multiple_splits"] == 0:
+        out = ["Train, validation and test are night-disjoint: no operational night "
+               "contributes scans to more than one split, so no test night was seen in "
+               "training or used to choose a cutoff."]
+    else:
+        out = [f"{ov['nights_in_multiple_splits']} operational nights contribute scans to more "
+               "than one split, so night-level results are exploratory rather than "
+               "night-independent generalization estimates.",
+               f"Validation and test share {ov['validation_test']} operational nights; "
+               "validation-selected cutoffs are applied to other scans of those nights in test."]
+    partial = any((cov.get("coverage_fraction_summary") or {}).get("min") not in (None, 1.0)
+                  for cov in cohort["night_coverage"].values())
+    if partial:
+        out.append("Night max and mean use only the scans assigned to that evaluation split; "
+                   "per-night evaluated and manifest scan counts expose partial-night coverage, "
+                   "and maximum scores are especially sensitive to unequal scan counts per night.")
+    else:
+        out.append("Every evaluated night is scored from all of its manifest scans, so night "
+                   "max and mean are not affected by partial-night coverage.")
+    return out
+
+
 def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
                      generated: str | None = None,
                      score_field: str = "pred_area",
@@ -747,10 +772,7 @@ def analyze_presence(samples_doc: Mapping, dataset_doc: Mapping,
             "pixel_area_km2": pixel_area_km2,
         },
         "cohort": cohort,
-        "caveats": [
-            "The manifest is split by scan, so many validation and test nights also occur in training; night-level results are exploratory rather than night-independent generalization estimates.",
-            f"Validation and test share {cohort['night_overlap']['validation_test']} operational nights; validation-selected area cutoffs are therefore applied to different scan fragments of many of the same nights in test.",
-            "Night max and mean use only the scans assigned to that evaluation split; per-night evaluated and manifest scan counts expose partial-night coverage, and maximum scores are especially sensitive to unequal evaluated scan counts per night.",
+        "caveats": _split_caveats(cohort) + [
             "The training/evaluation manifest subsamples negative scans, so prevalence-dependent accuracy and precision describe this curated cohort rather than operational prevalence.",
             "Negative-scene ground-truth masks are synthesized as all-zero arrays by dataset construction; they are not independent pixel-level annotations.",
             "Predicted area depends on each model's locked segmentation probability threshold; the validation-selected area cutoff is a second, separate threshold.",

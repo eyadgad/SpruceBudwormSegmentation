@@ -229,6 +229,43 @@ def score_variant(cfg: Dict, manifest: pd.DataFrame, norm_stats: Dict, device,
     return samples, {"per_split": per_split, "cls_scores": cls_scores}
 
 
+def extra_from_samples(samples: List[Dict], cfg: Dict) -> Dict:
+    """Rebuild split metrics from a saved samples.json (no extra forward pass)."""
+    per_split: Dict[str, Dict] = {}
+    keys = ["dice", "iou", "precision", "recall", "f1", "accuracy",
+            "boundary_iou", "nsd", "hd95", "assd", "bf1", "bf1_fuzzy"]
+    a_km2 = float(cfg["eval"].get("far_min_area_km2", 25.0))
+    a_cells = max(1, int(round(metrics_mod.km2_to_cells(a_km2))))
+    for split in ("val", "test"):
+        rows_split = [s for s in samples if s.get("split") == split]
+        pos_rows = [s for s in rows_split if int(s.get("label", 0)) == 1]
+        neg_rows = [s for s in rows_split if int(s.get("label", 0)) == 0]
+        block = {}
+        for k in keys:
+            vals = [s[k] for s in pos_rows if s.get(k) is not None]
+            block[k] = float(np.nanmean(np.asarray(vals, dtype=float))) if vals else float("nan")
+        TP = sum(int(s.get("tp", 0)) for s in pos_rows)
+        FP = sum(int(s.get("fp", 0)) for s in pos_rows)
+        FN = sum(int(s.get("fn", 0)) for s in pos_rows)
+        block["dice_micro"] = 2 * TP / (2 * TP + FP + FN + 1e-8)
+        block["iou_micro"] = TP / (TP + FP + FN + 1e-8)
+        FP_all = sum(int(s.get("fp", 0)) for s in rows_split)
+        block["dice_global"] = 2 * TP / (2 * TP + FP_all + FN + 1e-8)
+        block["iou_global"] = TP / (TP + FP_all + FN + 1e-8)
+        bg = [float(s["bg_fp_rate"]) for s in neg_rows if s.get("bg_fp_rate") is not None]
+        block["bg_fp_rate"] = float(np.mean(bg)) if bg else float("nan")
+        block["far_min_area_km2"] = a_km2
+        block["far_scan"] = (sum(1 for s in neg_rows if int(s.get("pred_area", 0)) >= a_cells)
+                             / len(neg_rows)) if neg_rows else float("nan")
+        block["sensitivity_retained"] = (
+            sum(1 for s in pos_rows if int(s.get("pred_area", 0)) >= a_cells) / len(pos_rows)
+        ) if pos_rows else float("nan")
+        block["n_pos_scenes"] = len(pos_rows)
+        block["n_neg_scenes"] = len(neg_rows)
+        per_split[split] = block
+    return {"per_split": per_split, "cls_scores": []}
+
+
 def paired_table(samples_a: List[Dict], samples_b: List[Dict],
                  name_a: str, name_b: str,
                  keys=("dice", "iou", "precision", "recall", "nsd", "bf1_fuzzy"),
@@ -334,6 +371,10 @@ def main() -> None:
     ap.add_argument("--cls-name", default="cls_swin_tiny_bal")
     ap.add_argument("--pair-baseline", default="unet_night_s42")
     ap.add_argument("--pair-final", default="night_base_attunet9_s42")
+    ap.add_argument("--reuse-samples", action="store_true",
+                    help="skip inference when comparison/<name>_samples.json already exists")
+    ap.add_argument("--skip-cls", action="store_true",
+                    help="do not attach Swin p_cls (use after parallel scoring)")
     args = ap.parse_args()
 
     base = cfgmod.load_base_config(args.base_config)
@@ -371,19 +412,25 @@ def main() -> None:
         print(f"[variant] {name} (threshold {threshold}, from {source.name})")
 
         key = name.replace("night_", "").replace("_attunet9", "") or name
-        samples, extra = score_variant(cfg, manifest, norm_stats, device, threshold, key)
-        if samples is None:
-            print(f"[skip] {name}: no checkpoint")
-            continue
-
-        samples_doc = {"selected": name, "compare": name, "threshold": threshold,
-                       "models": [{"key": key, "name": name,
-                                   "disp": name, "thr": threshold}],
-                       "samples": samples}
+        samples_path = out_dir / f"{name}_samples.json"
+        if args.reuse_samples and samples_path.exists():
+            print(f"[reuse] {name}: {samples_path.name}")
+            samples_doc = json.loads(samples_path.read_text(encoding="utf-8"))
+            samples = samples_doc["samples"]
+            extra = extra_from_samples(samples, cfg)
+        else:
+            samples, extra = score_variant(cfg, manifest, norm_stats, device, threshold, key)
+            if samples is None:
+                print(f"[skip] {name}: no checkpoint")
+                continue
+            samples_doc = {"selected": name, "compare": name, "threshold": threshold,
+                           "models": [{"key": key, "name": name,
+                                       "disp": name, "thr": threshold}],
+                           "samples": samples}
+            samples_path.write_text(
+                json.dumps(json_safe(samples_doc), separators=(",", ":"), allow_nan=False),
+                encoding="utf-8")
         samples_by_name[name] = samples
-        (out_dir / f"{name}_samples.json").write_text(
-            json.dumps(json_safe(samples_doc), separators=(",", ":"), allow_nan=False),
-            encoding="utf-8")
 
         presence = analyze_presence(samples_doc, dataset_doc, score_field="pred_area")
         (out_dir / f"presence_{name}.json").write_text(
@@ -462,7 +509,11 @@ def main() -> None:
             f.write("\n")
 
     from src.cascade import _load_done
-    cls_cfg, cls_res, cls_ckpt = _load_done(args.cls_base, args.cls_experiments, args.cls_name)
+    if args.skip_cls:
+        print("[cls] skipped (--skip-cls)", flush=True)
+        cls_cfg = cls_res = cls_ckpt = None
+    else:
+        cls_cfg, cls_res, cls_ckpt = _load_done(args.cls_base, args.cls_experiments, args.cls_name)
     if cls_res is not None and cls_ckpt is not None and not Path(cls_ckpt).exists():
         print(f"[cls] {args.cls_name} has a result but no weights at {cls_ckpt}; skipping p_cls")
         cls_ckpt = None

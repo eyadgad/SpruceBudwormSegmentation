@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import sys
 import tempfile
@@ -271,9 +272,9 @@ class PresenceCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = [
-                "configs/base_config.yaml",
-                "configs/experiments_elev.yaml",
-                "artifacts/norm_stats.json",
+                "configs/base_config_night.yaml",
+                "artifacts_night/manifest.csv",
+                "artifacts_night/norm_stats.json",
                 "src/channels.py",
                 "src/config.py",
                 "src/checkpoint.py",
@@ -282,8 +283,9 @@ class PresenceCoreTests(unittest.TestCase):
                 "src/models/__init__.py",
                 "src/models/architecture.py",
                 "scripts/export_dashboard_data.py",
-                "outputs/experiments/model_result.json",
-                "outputs/checkpoints/model_best.pt",
+                "outputs/night_split/experiments/model_config.json",
+                "outputs/night_split/experiments/model_result.json",
+                "outputs/night_split/checkpoints/model_best.pt",
             ]
             for rel in files:
                 path = root / rel
@@ -298,7 +300,10 @@ class PresenceCoreTests(unittest.TestCase):
 
             baseline = version()
             dependencies = [
-                "artifacts/norm_stats.json",
+                "artifacts_night/manifest.csv",
+                "artifacts_night/norm_stats.json",
+                "outputs/night_split/experiments/model_config.json",
+                "outputs/night_split/checkpoints/model_best.pt",
                 "src/channels.py",
                 "src/models/__init__.py",
                 "src/models/architecture.py",
@@ -341,101 +346,59 @@ class PresenceCoreTests(unittest.TestCase):
 
 class GeneratedPresenceTests(unittest.TestCase):
     def test_generated_document_if_present(self):
-        site = ROOT.parent / "sprucebudworm_progress.github.io" / "data"
+        site = ROOT / "sprucebudworm_progress.github.io" / "data"
+        if not site.exists():
+            site = ROOT.parent / "sprucebudworm_progress.github.io" / "data"
         path = site / "presence.json"
         if not path.exists():
             self.skipTest("presence.json has not been generated")
         doc = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(doc["schema_version"], 1)
+        self.assertEqual(doc["schema_version"], SCHEMA_VERSION)
         self.assertEqual(doc["selected_model_key"], "attunet9")
         self.assertEqual(doc["defaults"]["model_key"], "attunet9")
         self.assertEqual(doc["defaults"]["night_aggregation"], "max")
         self.assertEqual(doc["defaults"]["scan_operating_point"], "any_cell")
         self.assertEqual(doc["defaults"]["night_operating_point"], "validation_selected")
-        self.assertTrue(any(
-            "maximum scores are especially sensitive to unequal evaluated scan counts"
-            in caveat for caveat in doc["caveats"]))
-        self.assertEqual(len(doc["models"]), 4)
+        self.assertTrue(any("night-disjoint" in caveat for caveat in doc["caveats"]))
+        self.assertFalse(any("split by scan" in caveat for caveat in doc["caveats"]))
+        self.assertEqual([m["key"] for m in doc["models"]], list(export.VIEWER_MODEL_KEYS))
         self.assertEqual(sum(bool(m["selected"]) for m in doc["models"]), 1)
-        self.assertEqual(doc["cohort"]["evaluation_scans"], 615)
+
         cohort = doc["cohort"]
-        self.assertEqual(cohort["training_exposure"]["test"]["nights_seen_in_train"], 110)
-        self.assertEqual(cohort["training_exposure"]["test"]["nights_total"], 113)
-        self.assertEqual(cohort["night_overlap"]["validation_test"], 93)
-        self.assertEqual(cohort["night_coverage"]["val"]["partial_nights"], 154)
-        self.assertEqual(cohort["night_coverage"]["test"]["partial_nights"], 111)
+        self.assertEqual(cohort["evaluation_scans"], 920)
+        for split in ("val", "test"):
+            self.assertEqual(cohort["training_exposure"][split]["nights_seen_in_train"], 0)
+            self.assertEqual(cohort["night_coverage"][split]["partial_nights"], 0)
+        self.assertEqual(cohort["night_overlap"]["nights_in_multiple_splits"], 0)
+        self.assertEqual(cohort["night_overlap"]["validation_test"], 0)
         self.assertEqual(cohort["subset_full_night_truth_disagreements"], 0)
         summary = doc["models"][0]["night"]["max"]["splits"]["test"]["score_summary"]
         self.assertTrue(all("p05" in s and "p95" in s for s in summary.values()))
 
-        expected = {
-            "attunet9": {
-                "scan": (18081.0, 0.8989529498624065, 0.9184256055363321,
-                         {"tp": 127, "fp": 3, "tn": 31, "fn": 43}),
-                "scan_any": {"tp": 169, "fp": 27, "tn": 7, "fn": 1},
-                "max": (26207.0, 0.9329937927741525, 0.9236453201970442,
-                        {"tp": 66, "fp": 3, "tn": 26, "fn": 18}),
-                "mean": (12956.0, 0.9267865669266275, 0.9142036124794743,
-                         {"tp": 73, "fp": 5, "tn": 24, "fn": 11}),
-            },
-            "unetpp9": {
-                "scan": (16359.0, 0.8953621048392506, 0.9304498269896193,
-                         {"tp": 127, "fp": 3, "tn": 31, "fn": 43}),
-                "scan_any": {"tp": 168, "fp": 25, "tn": 9, "fn": 2},
-                "max": (16359.0, 0.936495304790705, 0.9339080459770116,
-                        {"tp": 69, "fp": 3, "tn": 26, "fn": 15}),
-                "mean": (11873.5, 0.9309247174916441, 0.9252873563218391,
-                         {"tp": 72, "fp": 4, "tn": 25, "fn": 12}),
-            },
-            "attunet7": {
-                "scan": (16924.0, 0.9033492180683269, 0.9139273356401383,
-                         {"tp": 126, "fp": 3, "tn": 31, "fn": 44}),
-                "scan_any": {"tp": 167, "fp": 21, "tn": 13, "fn": 3},
-                "max": (17316.0, 0.9345853891453128, 0.9207717569786535,
-                        {"tp": 69, "fp": 3, "tn": 26, "fn": 15}),
-                "mean": (13792.0, 0.9304472385802961, 0.9072249589490968,
-                         {"tp": 72, "fp": 5, "tn": 24, "fn": 12}),
-            },
-            "attunet8": {
-                "scan": (17505.0, 0.8958319350291959, 0.9160899653979239,
-                         {"tp": 125, "fp": 3, "tn": 31, "fn": 45}),
-                "scan_any": {"tp": 170, "fp": 29, "tn": 5, "fn": 0},
-                "max": (16027.0, 0.9315613560401081, 0.9222085385878489,
-                        {"tp": 69, "fp": 5, "tn": 24, "fn": 15}),
-                "mean": (13590.5, 0.924399172369887, 0.9090722495894907,
-                         {"tp": 72, "fp": 5, "tn": 24, "fn": 12}),
-            },
-        }
-        self.assertEqual({m["key"] for m in doc["models"]}, set(expected))
+        # Cross-check against export_variant_comparison, which derives the same
+        # presence quantities from src.finalize's per-scene test records.
+        comparison = ROOT / "outputs" / "night_split" / "comparison" / "comparison.csv"
+        if not comparison.exists():
+            self.skipTest("comparison.csv has not been generated")
+        with open(comparison, encoding="utf-8") as f:
+            ref = {(r["experiment"], r["split"]): r for r in csv.DictReader(f)}
         for model in doc["models"]:
             self.assertNotIn("mann_whitney", model["scan"]["splits"]["validation"])
             self.assertNotIn("mann_whitney", model["scan"]["splits"]["test"])
-            cutoff, val_auc, test_auc, confusion = expected[model["key"]]["scan"]
-            self.assertEqual(model["scan"]["selected_cutoff"]["cells"], cutoff)
-            self.assertAlmostEqual(model["scan"]["splits"]["validation"]["roc"]["auc"], val_auc)
-            self.assertAlmostEqual(model["scan"]["splits"]["test"]["roc"]["auc"], test_auc)
-            self.assertEqual(
-                model["scan"]["splits"]["test"]["operating_points"]["validation_selected"]["cutoff"],
-                cutoff,
-            )
-            self.assertEqual(
-                model["scan"]["splits"]["test"]["operating_points"]["validation_selected"]["confusion"],
-                confusion,
-            )
-            self.assertEqual(
-                model["scan"]["splits"]["test"]["operating_points"]["any_cell"]["confusion"],
-                expected[model["key"]]["scan_any"],
-            )
-            for aggregation in ("max", "mean"):
-                cutoff, val_auc, test_auc, confusion = expected[model["key"]][aggregation]
-                block = model["night"][aggregation]
-                self.assertEqual(block["selected_cutoff"]["cells"], cutoff)
-                self.assertAlmostEqual(block["splits"]["validation"]["roc"]["auc"], val_auc)
-                self.assertAlmostEqual(block["splits"]["test"]["roc"]["auc"], test_auc)
-                self.assertEqual(
-                    block["splits"]["test"]["operating_points"]["validation_selected"]["confusion"],
-                    confusion,
-                )
+            for split_key, split in (("validation", "val"), ("test", "test")):
+                row = ref[(model["name"], split)]
+                blocks = (("scan", model["scan"]),
+                          ("night_max", model["night"]["max"]),
+                          ("night_mean", model["night"]["mean"]))
+                for prefix, block in blocks:
+                    with self.subTest(model=model["key"], split=split, level=prefix):
+                        self.assertAlmostEqual(block["selected_cutoff"]["cells"],
+                                               float(row[f"{prefix}_cutoff"]), places=1)
+                        self.assertAlmostEqual(block["splits"][split_key]["roc"]["auc"],
+                                               float(row[f"{prefix}_auc"]), places=3)
+                        self.assertEqual(
+                            block["splits"][split_key]["operating_points"]["validation_selected"]["confusion"],
+                            json.loads(row[f"{prefix}_confusion"]))
 
 
 if __name__ == "__main__":
